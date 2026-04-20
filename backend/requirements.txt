@@ -1,0 +1,35 @@
+# Voice AI RAG Backend Dependencies
+# Python 3.10+ required
+
+# FastAPI Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Configuration
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# LLM - Google Gemini
+google-generativeai>=0.8.0
+
+# STT - Faster Whisper (local, no API needed)
+faster-whisper>=1.0.0
+
+# TTS - Piper (local, no API needed)
+piper-tts>=1.2.0
+
+# Vector Database - ChromaDB
+chromadb>=0.4.22
+
+# Embeddings
+sentence-transformers>=2.3.1
+
+# Document Processing
+PyPDF2>=3.0.1
+pdfplumber>=0.10.3
+python-docx>=1.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+aiofiles>=23.2.1

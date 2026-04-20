@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice AI RAG - Sesli Asistan</title>
+    <meta name="description" content="Azure servisleri ile gerçek zamanlı sesli soru-cevap sistemi">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-microphone-lines"></i>
+                    <span>Voice AI</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="chat">
+                    <i class="fas fa-comments"></i>
+                    <span>Sesli Sohbet</span>
+                </a>
+                <a href="#" class="nav-item" data-view="documents">
+                    <i class="fas fa-folder-open"></i>
+                    <span>Belgeler</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="stats">
+                    <div class="stat-item">
+                        <i class="fas fa-file-alt"></i>
+                        <span id="doc-count">0 Belge</span>
+                    </div>
+                    <div class="stat-item status" id="api-status">
+                        <i class="fas fa-circle"></i>
+                        <span>Bağlanıyor...</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat View -->
+            <div class="view active" id="chat-view">
+                <header class="view-header">
+                    <h1>Sesli Asistan</h1>
+                    <p>Belgelerinize sesli sorular sorun, sesli cevaplar alın</p>
+                </header>
+                
+                <div class="chat-container">
+                    <div class="messages" id="messages">
+                        <!-- Welcome Message -->
+                        <div class="message system">
+                            <div class="message-content">
+                                <i class="fas fa-robot"></i>
+                                <div class="text">
+                                    <p>Merhaba! 👋 Ben Voice AI asistanınızım.</p>
+                                    <p>Belgelerinizi yükleyin ve bana sesli sorular sorun. Size yüklediğiniz belgelere dayanarak cevap vereceğim.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Voice Input Area -->
+                    <div class="input-area">
+                        <div class="voice-controls">
+                            <button class="voice-btn" id="voice-btn">
+                                <div class="pulse-ring"></div>
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                            <div class="voice-status" id="voice-status">
+                                Konuşmak için mikrofona basılı tutun
+                            </div>
+                        </div>
+                        
+                        <!-- Alternative Text Input -->
+                        <div class="text-input-wrapper">
+                            <div class="divider">
+                                <span>veya yazarak sorun</span>
+                            </div>
+                            <div class="text-input-area">
+                                <input type="text" id="text-input" placeholder="Sorunuzu yazın...">
+                                <button class="send-btn" id="send-btn">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Documents View -->
+            <div class="view" id="documents-view">
+                <header class="view-header">
+                    <h1>Belge Yönetimi</h1>
+                    <p>PDF, DOCX, TXT veya MD dosyalarınızı yükleyin</p>
+                </header>
+                
+                <div class="documents-container">
+                    <!-- Upload Area -->
+                    <div class="upload-area" id="upload-area">
+                        <div class="upload-content">
+                            <div class="upload-icon">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                            </div>
+                            <h3>Belge Yükle</h3>
+                            <p>Dosyaları sürükleyip bırakın veya seçmek için tıklayın</p>
+                            <div class="supported-formats">
+                                <span class="format-badge">PDF</span>
+                                <span class="format-badge">DOCX</span>
+                                <span class="format-badge">TXT</span>
+                                <span class="format-badge">MD</span>
+                            </div>
+                            <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" multiple hidden>
+                        </div>
+                    </div>
+                    
+                    <!-- Upload Progress -->
+                    <div class="upload-progress hidden" id="upload-progress">
+                        <div class="progress-info">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span id="progress-text">Yükleniyor...</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Documents List -->
+                    <div class="documents-list" id="documents-list">
+                        <div class="list-header">
+                            <h3>Yüklenen Belgeler</h3>
+                            <button class="clear-all-btn" id="clear-all-btn">
+                                <i class="fas fa-trash"></i>
+                                Tümünü Sil
+                            </button>
+                        </div>
+                        <div class="list-content" id="list-content">
+                            <!-- Documents will be inserted here -->
+                            <div class="empty-state">
+                                <i class="fas fa-folder-open"></i>
+                                <p>Henüz belge yüklenmedi</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Audio Player (Hidden) -->
+    <audio id="audio-player" hidden></audio>
+    
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
