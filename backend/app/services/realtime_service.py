@@ -1,5 +1,6 @@
 """
-Real-time Voice Streaming Service - Local (Faster Whisper + Piper TTS)
+Real-time Voice Streaming Service - Faster Whisper STT + Piper TTS
+Conversation history destekli tam pipeline
 """
 
 import asyncio
@@ -19,7 +20,7 @@ from ..models.exceptions import SpeechServiceError
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons so models are loaded once
+# Singleton model yükleme
 _whisper_model = None
 _piper_voice = None
 _model_lock = asyncio.Lock()
@@ -27,13 +28,13 @@ _model_lock = asyncio.Lock()
 
 def _load_whisper_sync(model_size: str, device: str, compute_type: str):
     from faster_whisper import WhisperModel
-    logger.info(f"Loading Faster Whisper model: {model_size} ({device}/{compute_type})")
+    logger.info(f"Loading Faster Whisper: {model_size} ({device}/{compute_type})")
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
 def _load_piper_sync(model_path: str):
     from piper import PiperVoice
-    logger.info(f"Loading Piper TTS model: {model_path}")
+    logger.info(f"Loading Piper TTS: {model_path}")
     return PiperVoice.load(model_path)
 
 
@@ -110,15 +111,13 @@ class RealtimeTranscriber:
         self.on_partial: Optional[Callable[[str], None]] = None
         self.on_final: Optional[Callable[[str], None]] = None
         self.on_error: Optional[Callable[[str], None]] = None
-        self.partial_text = ""
         self.final_text = ""
 
     def start(self) -> None:
         self.audio_buffer = AudioBuffer()
         self.is_running = True
-        self.partial_text = ""
         self.final_text = ""
-        logger.info("Realtime transcription started (Faster Whisper)")
+        logger.info("Realtime transcription started")
 
     def push_audio(self, audio_data: bytes) -> None:
         if self.is_running:
@@ -191,9 +190,8 @@ class RealtimeSynthesizer:
         self,
         text: str,
         on_chunk: Callable[[bytes], None],
-        on_complete: Optional[Callable[[], None]] = None
+        on_complete: Optional[Callable[[], None]] = None,
     ) -> None:
-        import re
         try:
             sentences = self._split_sentences(text)
             if not sentences:
@@ -254,7 +252,8 @@ class RealtimeSynthesizer:
 
 class RealtimeVoicePipeline:
     """
-    Full voice pipeline: STT (Faster Whisper) -> RAG -> LLM (Gemini) -> TTS (Piper)
+    Tam ses pipeline: STT (Whisper) → RAG → LLM (Gemini) → TTS (Piper)
+    Konuşma hafızası destekli.
     """
 
     def __init__(
@@ -262,11 +261,15 @@ class RealtimeVoicePipeline:
         rag_service,
         llm_service,
         send_event: Callable[[RealtimeEvent], None],
-        mode: str = "rag"
+        mode: str = "rag",
+        conv_service=None,
+        session_id: Optional[str] = None,
     ):
         self.settings = get_settings()
         self.rag_service = rag_service
         self.llm_service = llm_service
+        self.conv_service = conv_service
+        self.session_id = session_id
         self.send_event = send_event
         self.mode = mode
         self.transcriber: Optional[RealtimeTranscriber] = None
@@ -313,27 +316,39 @@ class RealtimeVoicePipeline:
     async def _process_query(self, query: str) -> None:
         self._set_state(StreamState.PROCESSING)
         try:
+            # Konuşma geçmişini al
+            history_text = ""
+            if self.conv_service and self.session_id:
+                history_text = self.conv_service.get_history_as_text(
+                    self.session_id, max_turns=5
+                )
+
             context = ""
             sources = []
 
             if self.mode == "rag" and self.rag_service:
                 try:
-                    context, source_docs = await self.rag_service.get_context(query)
-                    sources = [{"filename": s.filename, "score": s.score} for s in source_docs]
+                    context, source_docs, _ = await self.rag_service.get_context(query)
+                    sources = [
+                        {"filename": s.filename, "score": s.score}
+                        for s in source_docs
+                    ]
                 except Exception as e:
                     logger.warning(f"RAG error (continuing without context): {e}")
 
             if self.mode == "free":
-                answer = await self.llm_service.generate_response(
-                    query,
-                    context="",
-                    system_prompt="""Sen yardımsever bir Türkçe asistansın.
-Kullanıcının sorularına doğal ve samimi bir şekilde cevap ver.
-Cevapların kısa ve öz olsun, gereksiz tekrarlardan kaçın.
-Türkçe'yi akıcı ve doğru kullan."""
+                answer = await self.llm_service.generate_free_response(
+                    query, conversation_history=history_text
                 )
             else:
-                answer = await self.llm_service.generate_response(query, context)
+                answer = await self.llm_service.generate_response(
+                    query, context, conversation_history=history_text
+                )
+
+            # Konuşma geçmişine kaydet
+            if self.conv_service and self.session_id:
+                self.conv_service.add_user_message(self.session_id, query)
+                self.conv_service.add_assistant_message(self.session_id, answer)
 
             self._emit("answer", {"text": answer, "sources": sources})
             self._set_state(StreamState.SPEAKING)

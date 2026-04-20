@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .api.routes import router
+from .api.websocket_routes import router as ws_router
 from .models.exceptions import VoiceAIException
 
 # Logging configuration
@@ -100,6 +101,7 @@ Azure servisleri ile gerçek zamanlı sesli soru-cevap sistemi.
     
     # Include routers
     app.include_router(router, prefix="/api")
+    app.include_router(ws_router, prefix="/api")
     
     # Root endpoint
     @app.get("/", tags=["Root"])
