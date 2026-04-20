@@ -1,6 +1,6 @@
 /**
- * Voice AI RAG - Real-time Frontend Application
- * Enhanced with RAG/Free mode toggle
+ * Voice AI RAG - Frontend
+ * Conversation memory, score badge, pipeline metrics destekli
  */
 
 // ============================================
@@ -12,21 +12,25 @@ const CONFIG = {
     SAMPLE_RATE: 16000,
     AUDIO_CHUNK_SIZE: 4096,
     RECONNECT_DELAY: 1000,
-    MAX_RECONNECT_ATTEMPTS: 5
+    MAX_RECONNECT_ATTEMPTS: 5,
+    SESSION_KEY: 'voice_ai_session_id'
 };
 
 // ============================================
 // Application State
 // ============================================
 const state = {
-    // Mode
-    chatMode: 'rag', // 'rag' or 'free'
+    chatMode: 'rag',
 
     // WebSocket
     ws: null,
     clientId: null,
     isConnected: false,
     reconnectAttempts: 0,
+
+    // Session / Conversation
+    sessionId: localStorage.getItem(CONFIG.SESSION_KEY) || null,
+    turnCount: 0,
 
     // Audio Recording
     isRecording: false,
@@ -44,7 +48,6 @@ const state = {
     currentState: 'idle',
     documents: [],
 
-    // Message tracking
     currentUserMsgId: null,
     currentAssistantMsgId: null
 };
@@ -53,16 +56,13 @@ const state = {
 // DOM Elements
 // ============================================
 const elements = {
-    // Navigation
     navItems: document.querySelectorAll('.nav-item'),
     views: document.querySelectorAll('.view'),
 
-    // Mode
     modeRag: document.getElementById('mode-rag'),
     modeFree: document.getElementById('mode-free'),
     modeIndicator: document.getElementById('mode-indicator'),
 
-    // Chat
     messages: document.getElementById('messages'),
     voiceBtn: document.getElementById('voice-btn'),
     voiceStatus: document.getElementById('voice-status'),
@@ -70,7 +70,6 @@ const elements = {
     sendBtn: document.getElementById('send-btn'),
     clearChat: document.getElementById('clear-chat'),
 
-    // Documents
     uploadArea: document.getElementById('upload-area'),
     fileInput: document.getElementById('file-input'),
     uploadProgress: document.getElementById('upload-progress'),
@@ -79,11 +78,11 @@ const elements = {
     listContent: document.getElementById('list-content'),
     clearAllBtn: document.getElementById('clear-all-btn'),
 
-    // Status
     docCount: document.getElementById('doc-count'),
+    turnCount: document.getElementById('turn-count'),
     apiStatus: document.getElementById('api-status'),
+    sessionInfo: document.getElementById('session-info'),
 
-    // Toast
     toastContainer: document.getElementById('toast-container')
 };
 
@@ -91,8 +90,8 @@ const elements = {
 // Initialization
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Voice AI Real-time starting...');
-
+    console.log('Voice AI starting...');
+    updateSessionDisplay();
     initNavigation();
     initModeToggle();
     initVoiceButton();
@@ -105,53 +104,87 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================
+// Session Management
+// ============================================
+function saveSession(sessionId) {
+    state.sessionId = sessionId;
+    localStorage.setItem(CONFIG.SESSION_KEY, sessionId);
+    updateSessionDisplay();
+}
+
+function updateSessionDisplay() {
+    if (elements.sessionInfo) {
+        if (state.sessionId) {
+            const short = state.sessionId.slice(0, 8) + '…';
+            elements.sessionInfo.textContent = `Session: ${short}`;
+            elements.sessionInfo.title = `Session ID: ${state.sessionId}`;
+        } else {
+            elements.sessionInfo.textContent = 'Yeni oturum';
+        }
+    }
+}
+
+function updateTurnCount(count) {
+    state.turnCount = count;
+    if (elements.turnCount) {
+        elements.turnCount.textContent = `${count} Tur`;
+    }
+}
+
+// ============================================
 // Chat Actions
 // ============================================
 function initChatActions() {
     if (elements.clearChat) {
         elements.clearChat.addEventListener('click', () => {
-            if (confirm('Sohbeti temizlemek istiyor musunuz?')) {
+            if (confirm('Sohbeti temizlemek istiyor musunuz? Oturum geçmişi de sıfırlanacak.')) {
                 clearChat();
             }
         });
     }
 }
 
-function clearChat() {
-    // Keep only the welcome message
+async function clearChat() {
+    // Session'ı sil
+    if (state.sessionId) {
+        try {
+            await fetch(`${CONFIG.API_BASE}/chat/sessions/${state.sessionId}`, { method: 'DELETE' });
+        } catch (e) { /* ignore */ }
+    }
+    state.sessionId = null;
+    localStorage.removeItem(CONFIG.SESSION_KEY);
+    updateSessionDisplay();
+    updateTurnCount(0);
+
     const welcomeMsg = elements.messages.querySelector('.message.system');
     elements.messages.innerHTML = '';
-    if (welcomeMsg) {
-        elements.messages.appendChild(welcomeMsg);
-    }
-    showToast('success', 'Temizlendi', 'Sohbet temizlendi');
+    if (welcomeMsg) elements.messages.appendChild(welcomeMsg);
+    showToast('success', 'Temizlendi', 'Sohbet ve oturum sıfırlandı');
 }
 
 // ============================================
 // Mode Toggle
 // ============================================
 function initModeToggle() {
-    elements.modeRag.addEventListener('click', () => setMode('rag'));
-    elements.modeFree.addEventListener('click', () => setMode('free'));
+    if (elements.modeRag) elements.modeRag.addEventListener('click', () => setMode('rag'));
+    if (elements.modeFree) elements.modeFree.addEventListener('click', () => setMode('free'));
 }
 
 function setMode(mode) {
     state.chatMode = mode;
+    if (elements.modeRag) elements.modeRag.classList.toggle('active', mode === 'rag');
+    if (elements.modeFree) elements.modeFree.classList.toggle('active', mode === 'free');
 
-    // Update buttons
-    elements.modeRag.classList.toggle('active', mode === 'rag');
-    elements.modeFree.classList.toggle('active', mode === 'free');
-
-    // Update indicator badge
-    if (mode === 'rag') {
-        elements.modeIndicator.className = 'mode-badge';
-        elements.modeIndicator.innerHTML = '<i class="fas fa-book-open"></i><span>RAG Modu</span>';
-    } else {
-        elements.modeIndicator.className = 'mode-badge free';
-        elements.modeIndicator.innerHTML = '<i class="fas fa-comments"></i><span>Serbest Mod</span>';
+    if (elements.modeIndicator) {
+        if (mode === 'rag') {
+            elements.modeIndicator.className = 'mode-badge';
+            elements.modeIndicator.innerHTML = '<i class="fas fa-book-open"></i><span>RAG Modu</span>';
+        } else {
+            elements.modeIndicator.className = 'mode-badge free';
+            elements.modeIndicator.innerHTML = '<i class="fas fa-comments"></i><span>Serbest Mod</span>';
+        }
     }
 
-    // Show toast
     const modeText = mode === 'rag' ? 'RAG Modu (Belge Tabanlı)' : 'Serbest Mod (Genel Sohbet)';
     showToast('info', 'Mod Değiştirildi', modeText);
 }
@@ -168,7 +201,6 @@ function connectWebSocket() {
 
     try {
         state.ws = new WebSocket(wsUrl);
-
         state.ws.onopen = handleWsOpen;
         state.ws.onclose = handleWsClose;
         state.ws.onerror = handleWsError;
@@ -180,21 +212,20 @@ function connectWebSocket() {
 }
 
 function handleWsOpen() {
-    console.log('✅ WebSocket connected');
+    console.log('WebSocket connected');
     state.isConnected = true;
     state.reconnectAttempts = 0;
     updateStatus('online', 'Bağlı ⚡');
 }
 
 function handleWsClose(event) {
-    console.log('WebSocket closed:', event.code, event.reason);
+    console.log('WebSocket closed:', event.code);
     state.isConnected = false;
     updateStatus('offline', 'Bağlantı kesildi');
 
     if (state.reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
         state.reconnectAttempts++;
         const delay = CONFIG.RECONNECT_DELAY * state.reconnectAttempts;
-        console.log(`Reconnecting in ${delay}ms (attempt ${state.reconnectAttempts})`);
         setTimeout(connectWebSocket, delay);
     }
 }
@@ -209,17 +240,18 @@ function handleWsMessage(event) {
         const message = JSON.parse(event.data);
         const { type, data } = message;
 
-        console.log('📨 WS:', type, data);
-
         switch (type) {
             case 'connected':
                 console.log('Connected as:', data.client_id);
+                break;
+            case 'session':
+                // WS pipeline'dan session ID gel
+                saveSession(data.session_id);
                 break;
             case 'state':
                 handleStateChange(data.state);
                 break;
             case 'listening_started':
-                console.log('Listening started');
                 break;
             case 'transcription':
                 handleTranscription(data.text, data.is_final);
@@ -252,8 +284,12 @@ function handleWsMessage(event) {
 
 function sendWsMessage(type, data = {}) {
     if (state.ws?.readyState === WebSocket.OPEN) {
-        // Include current mode in messages
-        const message = { type, mode: state.chatMode, ...data };
+        const message = {
+            type,
+            mode: state.chatMode,
+            session_id: state.sessionId,
+            ...data
+        };
         state.ws.send(JSON.stringify(message));
         return true;
     }
@@ -277,22 +313,15 @@ function handleStateChange(newState) {
     const config = statusConfig[newState] || statusConfig.idle;
     elements.voiceStatus.textContent = config.text;
     elements.voiceStatus.className = `voice-status ${config.class}`;
-
     elements.voiceBtn.classList.toggle('recording', newState === 'listening');
 
-    // Cleanup empty messages when going to idle
-    if (newState === 'idle') {
-        if (state.currentUserMsgId) {
-            const msgEl = document.getElementById(state.currentUserMsgId);
-            if (msgEl) {
-                const textEl = msgEl.querySelector('.text p');
-                if (textEl) {
-                    const content = textEl.textContent.replace('|', '').trim();
-                    if (!content) {
-                        removeMessage(state.currentUserMsgId);
-                        state.currentUserMsgId = null;
-                    }
-                }
+    if (newState === 'idle' && state.currentUserMsgId) {
+        const msgEl = document.getElementById(state.currentUserMsgId);
+        if (msgEl) {
+            const textEl = msgEl.querySelector('.text p');
+            if (textEl && !textEl.textContent.replace('|', '').trim()) {
+                removeMessage(state.currentUserMsgId);
+                state.currentUserMsgId = null;
             }
         }
     }
@@ -304,37 +333,28 @@ function updateStatus(type, text) {
 }
 
 // ============================================
-// Voice Recording (Toggle Mode - Click to start/stop)
+// Voice Recording
 // ============================================
 const VoiceManager = {
-    // State
     isRecording: false,
     audioContext: null,
     mediaStream: null,
     processor: null,
     isToggling: false,
 
-    // Initialize
     init() {
-        // Toggle Handler with Debounce
         elements.voiceBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-
-            // Unlock Audio Context on first click
             getPlaybackContext();
-
             this.handleToggle();
         });
     },
 
-    // Main Toggle Logic
     handleToggle() {
         if (this.isToggling) return;
         this.isToggling = true;
         setTimeout(() => { this.isToggling = false; }, 300);
-
-        console.log('VoiceManager: Toggle. Current isRecording:', this.isRecording);
 
         if (this.isRecording) {
             this.stop();
@@ -343,89 +363,44 @@ const VoiceManager = {
         }
     },
 
-    // Destructive Stop - Guarantees cleanup
     stop() {
-        console.log('VoiceManager: Stopping...');
         this.isRecording = false;
-
-        // Immediate UI Update
         elements.voiceBtn.classList.remove('recording');
         updateStatus('processing', 'İşleniyor...');
         handleStateChange('processing');
 
-        // Cleanup Audio Resources
-        if (this.processor) {
-            this.processor.disconnect();
-            this.processor = null;
-        }
+        if (this.processor) { this.processor.disconnect(); this.processor = null; }
+        if (this.mediaStream) { this.mediaStream.getTracks().forEach(t => t.stop()); this.mediaStream = null; }
+        if (this.audioContext) { this.audioContext.close().catch(() => {}); this.audioContext = null; }
 
-        if (this.mediaStream) {
-            this.mediaStream.getTracks().forEach(track => track.stop());
-            this.mediaStream = null;
-        }
-
-        if (this.audioContext) {
-            this.audioContext.close().catch(e => console.warn('Error closing context:', e));
-            this.audioContext = null;
-        }
-
-        // Notify Backend
         sendWsMessage('stop');
-
-        // Sync Global State
         state.isRecording = false;
     },
 
     async start() {
-        console.log('VoiceManager: Starting...');
+        if (this.isRecording) { this.stop(); return; }
 
-        // Safety Check
-        if (this.isRecording) {
-            this.stop();
-            return;
-        }
-
-        // Barge-in: Cancel any current speech/processing
         if (state.currentState === 'processing' || state.currentState === 'speaking') {
             if (state.isPlaying) {
-                if (state.playbackContext) {
-                    state.playbackContext.close();
-                    state.playbackContext = null;
-                }
+                if (state.playbackContext) { state.playbackContext.close(); state.playbackContext = null; }
                 state.isPlaying = false;
                 sendWsMessage('cancel');
             }
         }
 
-        // 1. Immediate UI Feedback (Optimistic)
         this.isRecording = true;
         elements.voiceBtn.classList.add('recording');
         updateStatus('listening', 'Dinliyorum...');
-        // We set global state too
         state.isRecording = true;
 
-        // Cleanup UI from previous run
-        if (state.currentUserMsgId) {
-            removeMessage(state.currentUserMsgId);
-            state.currentUserMsgId = null;
-        }
+        if (state.currentUserMsgId) { removeMessage(state.currentUserMsgId); state.currentUserMsgId = null; }
 
-        // 2. Hardware Access & Setup
         try {
-            // Defensive cleanup before creating new context
-            if (this.audioContext) {
-                await this.audioContext.close().catch(e => console.warn('Closing old context:', e));
-                this.audioContext = null;
-            }
+            if (this.audioContext) { await this.audioContext.close().catch(() => {}); this.audioContext = null; }
 
             this.mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    sampleRate: CONFIG.SAMPLE_RATE,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
+                audio: { channelCount: 1, sampleRate: CONFIG.SAMPLE_RATE,
+                         echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             });
 
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
@@ -437,84 +412,52 @@ const VoiceManager = {
 
             this.processor.onaudioprocess = (e) => {
                 if (!this.isRecording) return;
-                const inputData = e.inputBuffer.getChannelData(0);
-                const pcmData = float32ToInt16(inputData);
-                const base64 = arrayBufferToBase64(pcmData.buffer);
-                sendWsMessage('audio', { data: base64 });
+                const pcmData = float32ToInt16(e.inputBuffer.getChannelData(0));
+                sendWsMessage('audio', { data: arrayBufferToBase64(pcmData.buffer) });
             };
 
             source.connect(this.processor);
             this.processor.connect(this.audioContext.destination);
 
-            // 3. Notify Backend
-            console.log('VoiceManager: Hardware ready, sending start...');
             sendWsMessage('start');
-
             handleStateChange('listening');
             showToast('success', 'Kayıt Başladı', 'Konuşmaya başlayın...');
 
         } catch (error) {
             console.error('VoiceManager Error:', error);
             showToast('error', 'Mikrofon Hatası', 'Erişim reddedildi veya hata oluştu');
-            this.stop(); // Revert state on error
+            this.stop();
             handleStateChange('idle');
         }
     }
 };
 
-function initVoiceButton() {
-    VoiceManager.init();
-}
-
-// kept for backward compatibility if called elsewhere, but logic delegated
-function handleVoiceToggle() {
-    VoiceManager.handleToggle();
-}
-function startRecording() {
-    VoiceManager.start();
-}
-function stopRecording() {
-    VoiceManager.stop();
-}
-
-
-
-
-
-
-
-
-
+function initVoiceButton() { VoiceManager.init(); }
+function handleVoiceToggle() { VoiceManager.handleToggle(); }
+function startRecording() { VoiceManager.start(); }
+function stopRecording() { VoiceManager.stop(); }
 
 // ============================================
 // Transcription Handling
 // ============================================
 function handleTranscription(text, isFinal) {
-    // Helper to format text
-    const formatText = (t) => t.charAt(0).toUpperCase() + t.slice(1);
-
-    // Create message bubble if it doesn't exist yet
     if (!state.currentUserMsgId) {
-        if (!text && !isFinal) return; // Don't create for empty partials
-        // Create message but don't set transcribing immediately if final
+        if (!text && !isFinal) return;
         state.currentUserMsgId = addMessage('user', text || '', !isFinal);
     }
 
     const msgEl = document.getElementById(state.currentUserMsgId);
     if (!msgEl) return;
-
     const textEl = msgEl.querySelector('.text p');
     if (!textEl) return;
 
     if (isFinal) {
-        textEl.textContent = formatText(text);
+        textEl.textContent = capitalize(text);
         textEl.classList.remove('transcribing');
         state.currentUserMsgId = null;
     } else {
-        // Update partial
         textEl.innerHTML = `<span class="transcribing">${escapeHtml(text)}</span><span class="cursor">|</span>`;
     }
-
     scrollToBottom();
 }
 
@@ -523,10 +466,7 @@ function finalizeUserMessage(text) {
         const msgEl = document.getElementById(state.currentUserMsgId);
         if (msgEl) {
             const textEl = msgEl.querySelector('.text p');
-            if (textEl) {
-                textEl.textContent = text;
-                textEl.classList.remove('transcribing');
-            }
+            if (textEl) { textEl.textContent = text; textEl.classList.remove('transcribing'); }
         }
     }
     state.currentUserMsgId = null;
@@ -537,19 +477,18 @@ function finalizeUserMessage(text) {
 // Answer Handling
 // ============================================
 function handleAnswer(text, sources) {
-    if (state.currentAssistantMsgId) {
-        removeMessage(state.currentAssistantMsgId);
-    }
+    if (state.currentAssistantMsgId) removeMessage(state.currentAssistantMsgId);
 
-    // Only show sources in RAG mode
     const showSources = state.chatMode === 'rag' && sources.length > 0;
     state.currentAssistantMsgId = addAssistantMessage(text, showSources ? sources : [], true);
 
     state.audioQueue = [];
     state.fullAudioBuffer = null;
+
+    // Konuşma turunu güncelle
+    updateTurnCount(state.turnCount + 1);
 }
 
-// Persistent AudioContext for playback
 let globalPlaybackContext = null;
 
 function getPlaybackContext() {
@@ -557,40 +496,31 @@ function getPlaybackContext() {
         globalPlaybackContext = new (window.AudioContext || window.webkitAudioContext)();
     }
     if (globalPlaybackContext.state === 'suspended') {
-        globalPlaybackContext.resume().catch(e => console.warn('Auto-resume failed:', e));
+        globalPlaybackContext.resume().catch(() => {});
     }
     return globalPlaybackContext;
 }
 
 function handleAudioChunk(base64Data) {
     const ctx = getPlaybackContext();
-    state.playbackContext = ctx; // Keep ref for UI sync if needed
+    state.playbackContext = ctx;
 
-    // Initialize timing if this is a new stream
     if (!state.isPlaying || !state.nextAudioTime || state.nextAudioTime < ctx.currentTime) {
         state.nextAudioTime = ctx.currentTime;
         state.audioChain = Promise.resolve();
         state.isPlaying = true;
     }
 
-    // Chain the processing to ensure order
     state.audioChain = state.audioChain.then(async () => {
         try {
             const arrayBuffer = base64ToArrayBuffer(base64Data);
             const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(ctx.destination);
-
-            // Schedule playback seamlessly
-            // Ensure we don't start in the past (allow small overlap/gap correction)
             const startTime = Math.max(ctx.currentTime, state.nextAudioTime);
             source.start(startTime);
-
-            // Update next start time
             state.nextAudioTime = startTime + audioBuffer.duration;
-
         } catch (error) {
             console.error('Audio chunk error:', error);
         }
@@ -607,7 +537,6 @@ function handleAudioComplete(fullAudioBase64) {
             if (audioDiv) {
                 audioDiv.classList.remove('streaming');
                 audioDiv.dataset.audio = fullAudioBase64;
-
                 const playBtn = audioDiv.querySelector('.play-btn');
                 if (playBtn) {
                     playBtn.classList.remove('playing');
@@ -617,7 +546,6 @@ function handleAudioComplete(fullAudioBase64) {
             }
         }
     }
-
     state.currentAssistantMsgId = null;
 }
 
@@ -631,12 +559,8 @@ function handleError(message) {
         const msgEl = document.getElementById(state.currentUserMsgId);
         if (msgEl) {
             const textEl = msgEl.querySelector('.text p');
-            if (textEl) {
-                // Remove if empty or only contains cursor (|)
-                const content = textEl.textContent.replace('|', '').trim();
-                if (!content) {
-                    removeMessage(state.currentUserMsgId);
-                }
+            if (textEl && !textEl.textContent.replace('|', '').trim()) {
+                removeMessage(state.currentUserMsgId);
             }
         }
         state.currentUserMsgId = null;
@@ -646,7 +570,6 @@ function handleError(message) {
         removeMessage(state.currentAssistantMsgId);
         state.currentAssistantMsgId = null;
     }
-
     handleStateChange('idle');
 }
 
@@ -660,35 +583,17 @@ function playStoredAudio(base64Audio, btn) {
     const icon = btn.querySelector('i');
 
     if (state.isPlaying) {
-        if (state.playbackContext) {
-            state.playbackContext.close();
-            state.playbackContext = null;
-        }
+        if (state.playbackContext) { state.playbackContext.close(); state.playbackContext = null; }
         state.isPlaying = false;
         icon.className = 'fas fa-play';
         wave?.classList.remove('playing');
         return;
     }
 
-    const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
-
-    audio.onplay = () => {
-        state.isPlaying = true;
-        icon.className = 'fas fa-pause';
-        wave?.classList.add('playing');
-    };
-
-    audio.onended = () => {
-        state.isPlaying = false;
-        icon.className = 'fas fa-play';
-        wave?.classList.remove('playing');
-    };
-
-    audio.onerror = () => {
-        showToast('error', 'Ses Hatası', 'Ses oynatılamadı');
-        icon.className = 'fas fa-play';
-    };
-
+    const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
+    audio.onplay = () => { state.isPlaying = true; icon.className = 'fas fa-pause'; wave?.classList.add('playing'); };
+    audio.onended = () => { state.isPlaying = false; icon.className = 'fas fa-play'; wave?.classList.remove('playing'); };
+    audio.onerror = () => { showToast('error', 'Ses Hatası', 'Ses oynatılamadı'); icon.className = 'fas fa-play'; };
     audio.play();
 }
 
@@ -705,17 +610,12 @@ function initNavigation() {
 }
 
 function switchView(viewName) {
-    elements.navItems.forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewName);
-    });
-
-    elements.views.forEach(view => {
-        view.classList.toggle('active', view.id === `${viewName}-view`);
-    });
+    elements.navItems.forEach(item => item.classList.toggle('active', item.dataset.view === viewName));
+    elements.views.forEach(view => view.classList.toggle('active', view.id === `${viewName}-view`));
 }
 
 // ============================================
-// Text Input
+// Text Input → /chat/query (tüm modlar)
 // ============================================
 function initTextInput() {
     elements.sendBtn.addEventListener('click', sendTextMessage);
@@ -729,19 +629,16 @@ async function sendTextMessage() {
     if (!text) return;
 
     elements.textInput.value = '';
-
     addMessage('user', text);
     const loadingId = addLoadingMessage();
 
     try {
-        // Use appropriate endpoint based on mode
-        const endpoint = state.chatMode === 'rag' ? '/text/query' : '/chat/query';
-
-        const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, {
+        const response = await fetch(`${CONFIG.API_BASE}/chat/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 query: text,
+                session_id: state.sessionId,
                 include_audio: true,
                 mode: state.chatMode
             })
@@ -755,8 +652,20 @@ async function sendTextMessage() {
         }
 
         const data = await response.json();
+
+        // Session kaydet
+        if (data.session_id) saveSession(data.session_id);
+        if (data.conversation_turn) updateTurnCount(data.conversation_turn);
+
         const showSources = state.chatMode === 'rag' && data.sources?.length > 0;
-        addAssistantMessage(data.answer, showSources ? data.sources : [], false, data.audio_base64);
+        addAssistantMessage(
+            data.answer,
+            showSources ? data.sources : [],
+            false,
+            data.audio_base64,
+            data.metrics,
+            data.rewritten_query
+        );
 
     } catch (error) {
         removeMessage(loadingId);
@@ -774,12 +683,12 @@ function addMessage(type, content, isTranscribing = false) {
     div.id = id;
     div.className = `message ${type}`;
 
-    const transcribingClass = isTranscribing ? 'transcribing' : '';
-
     div.innerHTML = `
         <div class="message-content">
             <div class="text">
-                <p class="${transcribingClass}">${escapeHtml(content) || (isTranscribing ? '<span class="cursor">|</span>' : '')}</p>
+                <p class="${isTranscribing ? 'transcribing' : ''}">${
+                    escapeHtml(content) || (isTranscribing ? '<span class="cursor">|</span>' : '')
+                }</p>
             </div>
         </div>
     `;
@@ -789,20 +698,63 @@ function addMessage(type, content, isTranscribing = false) {
     return id;
 }
 
-function addAssistantMessage(text, sources = [], isStreaming = false, audioBase64 = null) {
+function addAssistantMessage(
+    text,
+    sources = [],
+    isStreaming = false,
+    audioBase64 = null,
+    metrics = null,
+    rewrittenQuery = null
+) {
     const id = `msg-${Date.now()}`;
     const div = document.createElement('div');
     div.id = id;
     div.className = 'message assistant';
 
+    // Sources HTML (with score badges)
     let sourcesHtml = '';
     if (sources.length > 0) {
-        const items = sources.map(s =>
-            `<span class="source-item"><i class="fas fa-file-lines"></i>${escapeHtml(s.filename)}</span>`
-        ).join('');
+        const items = sources.map(s => {
+            const score = s.score ?? 0;
+            const pct = Math.round(score * 100);
+            const cls = pct >= 70 ? 'high' : pct >= 45 ? 'mid' : 'low';
+            return `<span class="source-item">
+                <i class="fas fa-file-lines"></i>${escapeHtml(s.filename)}
+                <span class="score-badge ${cls}">${pct}%</span>
+            </span>`;
+        }).join('');
         sourcesHtml = `<div class="sources"><div class="sources-title">📚 Kaynaklar</div>${items}</div>`;
     }
 
+    // Rewritten query badge
+    let rewriteHtml = '';
+    if (rewrittenQuery) {
+        rewriteHtml = `<div class="rewrite-badge">
+            <i class="fas fa-wand-magic-sparkles"></i>
+            Sorgu yeniden yazıldı: "<em>${escapeHtml(rewrittenQuery)}</em>"
+        </div>`;
+    }
+
+    // Pipeline metrics
+    let metricsHtml = '';
+    if (metrics) {
+        const parts = [];
+        if (metrics.stt_ms != null)       parts.push(`<span class="metric-item"><i class="fas fa-microphone"></i>STT <span class="val">${metrics.stt_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.rewrite_ms != null)    parts.push(`<span class="metric-item"><i class="fas fa-pen"></i>Rewrite <span class="val">${metrics.rewrite_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.retrieval_ms != null)  parts.push(`<span class="metric-item"><i class="fas fa-magnifying-glass"></i>RAG <span class="val">${metrics.retrieval_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.llm_ms != null)        parts.push(`<span class="metric-item"><i class="fas fa-brain"></i>LLM <span class="val">${metrics.llm_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.tts_ms != null)        parts.push(`<span class="metric-item"><i class="fas fa-volume-high"></i>TTS <span class="val">${metrics.tts_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.docs_after_threshold != null) {
+            parts.push(`<span class="metric-item"><i class="fas fa-filter"></i>Docs <span class="val">${metrics.docs_after_threshold}/${metrics.docs_retrieved ?? '?'}</span></span>`);
+        }
+        parts.push(`<span class="metric-item"><i class="fas fa-clock"></i>Toplam <span class="val">${metrics.total_ms.toFixed(0)}ms</span></span>`);
+
+        if (parts.length > 0) {
+            metricsHtml = `<div class="metrics-panel">${parts.join('')}</div>`;
+        }
+    }
+
+    // Audio controls
     let audioHtml = '';
     if (isStreaming) {
         audioHtml = `
@@ -831,7 +783,9 @@ function addAssistantMessage(text, sources = [], isStreaming = false, audioBase6
             <div class="text">
                 <p>${formatText(text)}</p>
                 ${audioHtml}
+                ${rewriteHtml}
                 ${sourcesHtml}
+                ${metricsHtml}
             </div>
         </div>
     `;
@@ -854,25 +808,19 @@ function addLoadingMessage() {
     const div = document.createElement('div');
     div.id = id;
     div.className = 'message assistant loading';
-
     div.innerHTML = `
         <div class="message-content">
             <div class="loading-dots"><span></span><span></span><span></span></div>
         </div>
     `;
-
     elements.messages.appendChild(div);
     scrollToBottom();
     return id;
 }
 
-function removeMessage(id) {
-    document.getElementById(id)?.remove();
-}
+function removeMessage(id) { document.getElementById(id)?.remove(); }
 
-function scrollToBottom() {
-    elements.messages.scrollTop = elements.messages.scrollHeight;
-}
+function scrollToBottom() { elements.messages.scrollTop = elements.messages.scrollHeight; }
 
 function formatText(text) {
     return escapeHtml(text)
@@ -885,6 +833,11 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function capitalize(text) {
+    if (!text) return '';
+    return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // ============================================
@@ -1040,18 +993,14 @@ function float32ToInt16(float32Array) {
 function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
     return btoa(binary);
 }
 
 function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
 }
 
@@ -1089,40 +1038,30 @@ setInterval(() => {
     if (state.isConnected) sendWsMessage('ping');
 }, 30000);
 
-// ============================================
-// Particle System
-// ============================================
+// Particles
 function createParticles() {
     const container = document.getElementById('particles');
     if (!container) return;
-
     const colors = ['#8b5cf6', '#06b6d4', '#10b981', '#f472b6'];
-    const particleCount = 30;
-
-    for (let i = 0; i < particleCount; i++) {
-        const particle = document.createElement('div');
-        particle.className = 'particle';
-        particle.style.left = `${Math.random() * 100}%`;
-        particle.style.background = colors[Math.floor(Math.random() * colors.length)];
-        particle.style.animationDuration = `${15 + Math.random() * 20}s`;
-        particle.style.animationDelay = `${Math.random() * 20}s`;
-        particle.style.width = `${2 + Math.random() * 4}px`;
-        particle.style.height = particle.style.width;
-        container.appendChild(particle);
+    for (let i = 0; i < 30; i++) {
+        const p = document.createElement('div');
+        p.className = 'particle';
+        p.style.left = `${Math.random() * 100}%`;
+        p.style.background = colors[Math.floor(Math.random() * colors.length)];
+        p.style.animationDuration = `${15 + Math.random() * 20}s`;
+        p.style.animationDelay = `${Math.random() * 20}s`;
+        p.style.width = `${2 + Math.random() * 4}px`;
+        p.style.height = p.style.width;
+        container.appendChild(p);
     }
 }
-
-// Initialize particles on load
 createParticles();
 
-// Add cursor glow effect
 document.addEventListener('mousemove', (e) => {
-    const x = e.clientX / window.innerWidth;
-    const y = e.clientY / window.innerHeight;
-    document.body.style.setProperty('--mouse-x', x);
-    document.body.style.setProperty('--mouse-y', y);
+    document.body.style.setProperty('--mouse-x', e.clientX / window.innerWidth);
+    document.body.style.setProperty('--mouse-y', e.clientY / window.innerHeight);
 });
 
-// Global functions
+// Global exports
 window.playStoredAudio = playStoredAudio;
 window.deleteDocument = deleteDocument;
