@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     # CORS Settings
     cors_origins: list[str] = Field(default=["*"], env="CORS_ORIGINS")
 
+    # RAG Pipeline - Advanced
+    score_threshold: float = Field(default=0.25, env="SCORE_THRESHOLD")
+    enable_query_rewriting: bool = Field(default=False, env="ENABLE_QUERY_REWRITING")
+
+    # Conversation Memory
+    max_conversation_history: int = Field(default=10, env="MAX_CONVERSATION_HISTORY")
+    session_expiry_minutes: int = Field(default=60, env="SESSION_EXPIRY_MINUTES")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
