@@ -4,13 +4,12 @@ API için veri modelleri
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
 
 class DocumentType(str, Enum):
-    """Desteklenen belge türleri"""
     PDF = "pdf"
     DOCX = "docx"
     TXT = "txt"
@@ -18,7 +17,6 @@ class DocumentType(str, Enum):
 
 
 class DocumentMetadata(BaseModel):
-    """Belge metadata bilgileri"""
     filename: str
     file_type: DocumentType
     file_size: int
@@ -28,7 +26,6 @@ class DocumentMetadata(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """Belge yükleme yanıtı"""
     id: str
     filename: str
     file_type: str
@@ -38,7 +35,6 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentListItem(BaseModel):
-    """Belge listesi item"""
     id: str
     filename: str
     file_type: str
@@ -48,67 +44,112 @@ class DocumentListItem(BaseModel):
 
 
 class DocumentListResponse(BaseModel):
-    """Belge listesi yanıtı"""
     documents: List[DocumentListItem]
     total_count: int
 
 
-class RAGQueryRequest(BaseModel):
-    """RAG sorgu isteği"""
-    query: str = Field(..., min_length=1, max_length=2000)
-    top_k: int = Field(default=5, ge=1, le=20)
-    include_sources: bool = Field(default=True)
-
-
 class SourceDocument(BaseModel):
-    """Kaynak belge bilgisi"""
     filename: str
     content: str
     score: float
     page: Optional[int] = None
 
 
+class PipelineMetrics(BaseModel):
+    total_ms: float
+    stt_ms: Optional[float] = None
+    retrieval_ms: Optional[float] = None
+    rewrite_ms: Optional[float] = None
+    llm_ms: Optional[float] = None
+    tts_ms: Optional[float] = None
+    docs_retrieved: Optional[int] = None
+    docs_after_threshold: Optional[int] = None
+
+
+class RAGQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000)
+    top_k: int = Field(default=5, ge=1, le=20)
+    include_sources: bool = Field(default=True)
+
+
 class RAGQueryResponse(BaseModel):
-    """RAG sorgu yanıtı"""
     query: str
     answer: str
     sources: List[SourceDocument] = []
     processing_time_ms: float
+    metrics: Optional[PipelineMetrics] = None
 
 
 class VoiceQueryResponse(BaseModel):
-    """Sesli sorgu yanıtı"""
     transcribed_text: str
     answer: str
     sources: List[SourceDocument] = []
-    audio_base64: str  # Base64 encoded audio response
+    audio_base64: str
     processing_time_ms: float
+    metrics: Optional[PipelineMetrics] = None
 
 
 class TextQueryRequest(BaseModel):
-    """Text tabanlı sorgu isteği"""
     query: str = Field(..., min_length=1, max_length=2000)
     include_audio: bool = Field(default=False)
 
 
 class TextQueryResponse(BaseModel):
-    """Text tabanlı sorgu yanıtı"""
     query: str
     answer: str
     sources: List[SourceDocument] = []
     audio_base64: Optional[str] = None
     processing_time_ms: float
+    metrics: Optional[PipelineMetrics] = None
 
+
+# ── Conversation / Chat ──────────────────────────────────────────────────────
+
+class ConversationRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ConversationMessage(BaseModel):
+    role: ConversationRole
+    content: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+
+class ChatQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000)
+    session_id: Optional[str] = None
+    include_audio: bool = Field(default=False)
+    mode: str = Field(default="rag")  # "rag" or "free"
+
+
+class ChatQueryResponse(BaseModel):
+    query: str
+    answer: str
+    session_id: str
+    sources: List[SourceDocument] = []
+    audio_base64: Optional[str] = None
+    processing_time_ms: float
+    conversation_turn: int
+    metrics: Optional[PipelineMetrics] = None
+    rewritten_query: Optional[str] = None
+
+
+class SessionHistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ConversationMessage]
+    turn_count: int
+
+
+# ── System ───────────────────────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
-    """Health check yanıtı"""
     status: str = "healthy"
     version: str
     services: dict
 
 
 class ErrorResponse(BaseModel):
-    """Hata yanıtı"""
     error: str
     detail: Optional[str] = None
     status_code: int
