@@ -77,7 +77,13 @@ async def realtime_voice_websocket(websocket: WebSocket, client_id: str):
     if not await manager.connect(websocket, client_id):
         return
 
-    await manager.send_event(client_id, RealtimeEvent("connected", {"client_id": client_id}))
+    from ..config import get_settings as _gs
+    _s = _gs()
+    await manager.send_event(client_id, RealtimeEvent("connected", {
+        "client_id": client_id,
+        "vad_silence_threshold":   _s.vad_silence_threshold,
+        "vad_silence_duration_ms": _s.vad_silence_duration_ms,
+    }))
 
     rag_service = get_rag_service()
     llm_service = get_llm_service()

@@ -314,59 +314,95 @@ class RealtimeVoicePipeline:
         await self._process_query(final_text)
 
     async def _process_query(self, query: str) -> None:
+        import re as _re
         self._set_state(StreamState.PROCESSING)
         try:
-            # Konuşma geçmişini al
             history_text = ""
             if self.conv_service and self.session_id:
-                history_text = self.conv_service.get_history_as_text(
-                    self.session_id, max_turns=5
-                )
+                history_text = self.conv_service.get_history_as_text(self.session_id, max_turns=5)
 
             context = ""
             sources = []
-
             if self.mode == "rag" and self.rag_service:
                 try:
                     context, source_docs, _ = await self.rag_service.get_context(query)
-                    sources = [
-                        {"filename": s.filename, "score": s.score}
-                        for s in source_docs
-                    ]
+                    sources = [{"filename": s.filename, "score": s.score} for s in source_docs]
                 except Exception as e:
-                    logger.warning(f"RAG error (continuing without context): {e}")
+                    logger.warning(f"RAG skipped: {e}")
 
-            if self.mode == "free":
-                answer = await self.llm_service.generate_free_response(
-                    query, conversation_history=history_text
-                )
-            else:
-                answer = await self.llm_service.generate_response(
-                    query, context, conversation_history=history_text
-                )
-
-            # Konuşma geçmişine kaydet
-            if self.conv_service and self.session_id:
-                self.conv_service.add_user_message(self.session_id, query)
-                self.conv_service.add_assistant_message(self.session_id, answer)
-
-            self._emit("answer", {"text": answer, "sources": sources})
             self._set_state(StreamState.SPEAKING)
 
-            audio_chunks = []
+            # ── Parallel LLM→TTS ─────────────────────────────────────────────
+            # Producer puts complete sentences into sentence_q.
+            # Consumer TTS-encodes each sentence and puts audio into audio_q in order.
+            # Main loop drains audio_q and emits chunks as they arrive.
 
-            def on_audio_chunk(chunk: bytes):
-                audio_chunks.append(chunk)
-                b64 = base64.b64encode(chunk).decode('utf-8')
-                self._emit("audio_chunk", {"data": b64, "format": "wav"})
+            sentence_q: asyncio.Queue = asyncio.Queue()
+            audio_q:    asyncio.Queue = asyncio.Queue()  # (order, bytes)
+            full_answer_parts = []
 
-            def on_complete():
-                if audio_chunks:
-                    full_audio = b''.join(audio_chunks)
-                    full_b64 = base64.b64encode(full_audio).decode('utf-8')
-                    self._emit("audio_complete", {"full_audio": full_b64})
+            async def produce_sentences():
+                buf = ""
+                order = 0
+                if self.mode == "free":
+                    gen = self.llm_service.generate_free_stream(query, conversation_history=history_text)
+                else:
+                    gen = self.llm_service.generate_response_stream(
+                        query, context, conversation_history=history_text
+                    )
+                async for token in gen:
+                    full_answer_parts.append(token)
+                    buf += token
+                    self._emit("answer_token", {"text": token})
+                    if _re.search(r'[.!?。！？]\s*$', buf.rstrip()) or len(buf) > 250:
+                        s = buf.strip()
+                        buf = ""
+                        if s:
+                            await sentence_q.put((order, s))
+                            order += 1
+                if buf.strip():
+                    await sentence_q.put((order, buf.strip()))
+                    order += 1
+                await sentence_q.put(None)  # sentinel
 
-            await self.synthesizer.synthesize_streaming(answer, on_audio_chunk, on_complete)
+            async def consume_sentences():
+                while True:
+                    item = await sentence_q.get()
+                    if item is None:
+                        await audio_q.put(None)
+                        break
+                    order, sentence = item
+                    try:
+                        audio = await self.synthesizer.synthesize_full(sentence)
+                        await audio_q.put((order, audio))
+                    except Exception as e:
+                        logger.error(f"TTS sentence error: {e}")
+
+            # Run producer & consumer concurrently
+            await asyncio.gather(produce_sentences(), consume_sentences())
+
+            # Drain audio queue in order and emit
+            full_answer = "".join(full_answer_parts)
+            if self.conv_service and self.session_id:
+                self.conv_service.add_user_message(self.session_id, query)
+                self.conv_service.add_assistant_message(self.session_id, full_answer)
+
+            self._emit("answer", {"text": full_answer, "sources": sources})
+
+            audio_chunks_all = []
+            while True:
+                item = await audio_q.get()
+                if item is None:
+                    break
+                _, audio_data = item
+                audio_chunks_all.append(audio_data)
+                for i in range(0, len(audio_data), 8192):
+                    b64 = base64.b64encode(audio_data[i:i + 8192]).decode()
+                    self._emit("audio_chunk", {"data": b64, "format": "wav"})
+
+            if audio_chunks_all:
+                full_b64 = base64.b64encode(b''.join(audio_chunks_all)).decode()
+                self._emit("audio_complete", {"full_audio": full_b64})
 
         except Exception as e:
             logger.error(f"Pipeline error: {e}")

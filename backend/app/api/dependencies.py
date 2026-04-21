@@ -1,19 +1,19 @@
 """
-FastAPI Dependencies
-Dependency Injection ile servis yönetimi
+FastAPI Dependencies — singleton service registry
 """
 
 from ..services.speech_service import SpeechService
 from ..services.document_service import DocumentService
 from ..services.rag_service import RAGService
 from ..services.llm_service import LLMService
+from ..services.reranker_service import RerankerService
 from ..services.conversation_service import ConversationService
 
-
-_speech_service: SpeechService = None
-_document_service: DocumentService = None
-_rag_service: RAGService = None
-_llm_service: LLMService = None
+_speech_service:       SpeechService       = None
+_document_service:     DocumentService     = None
+_rag_service:          RAGService          = None
+_llm_service:          LLMService          = None
+_reranker_service:     RerankerService     = None
 _conversation_service: ConversationService = None
 
 
@@ -45,6 +45,13 @@ def get_llm_service() -> LLMService:
     return _llm_service
 
 
+def get_reranker_service() -> RerankerService:
+    global _reranker_service
+    if _reranker_service is None:
+        _reranker_service = RerankerService()
+    return _reranker_service
+
+
 def get_conversation_service() -> ConversationService:
     global _conversation_service
     if _conversation_service is None:
@@ -53,9 +60,7 @@ def get_conversation_service() -> ConversationService:
 
 
 def reset_services() -> None:
-    global _speech_service, _document_service, _rag_service, _llm_service, _conversation_service
-    _speech_service = None
-    _document_service = None
-    _rag_service = None
-    _llm_service = None
-    _conversation_service = None
+    global _speech_service, _document_service, _rag_service, _llm_service
+    global _reranker_service, _conversation_service
+    _speech_service = _document_service = _rag_service = _llm_service = None
+    _reranker_service = _conversation_service = None
