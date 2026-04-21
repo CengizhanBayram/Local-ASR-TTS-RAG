@@ -1201,3 +1201,55 @@ body::before {
     clip: rect(0, 0, 0, 0);
     border: 0;
 }
+
+/* ── Inline Citations ──────────────────────────────────────── */
+.citation-ref {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    border-radius: var(--radius-full);
+    vertical-align: super;
+    cursor: default;
+    margin: 0 1px;
+    line-height: 1;
+    user-select: none;
+}
+.citation-ref:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
+}
+
+/* ── SSE Streaming message ────────────────────────────────── */
+.message.assistant.streaming .text .stream-text {
+    display: inline;
+}
+.stream-cursor {
+    display: inline-block;
+    color: var(--accent-primary);
+    font-weight: bold;
+    animation: blink-cursor 0.8s step-end infinite;
+    margin-left: 1px;
+    vertical-align: bottom;
+}
+@keyframes blink-cursor {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+}
+.message.assistant.streaming .stream-cursor {
+    display: inline-block;
+}
+.message.assistant:not(.streaming) .stream-cursor {
+    display: none;
+}
+
+/* ── Score badges (already defined, but ensure colors) ─────── */
+.score-badge.high { background: rgba(34,197,94,0.18);  color: #22c55e; border-color: rgba(34,197,94,0.3); }
+.score-badge.mid  { background: rgba(234,179,8,0.18);  color: #eab308; border-color: rgba(234,179,8,0.3); }
+.score-badge.low  { background: rgba(239,68,68,0.18);  color: #ef4444; border-color: rgba(239,68,68,0.3); }

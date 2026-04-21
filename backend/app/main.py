@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 async def _preload_models(settings) -> None:
     from .services.realtime_service import get_whisper_model, get_piper_voice
-    from .api.dependencies import get_rag_service, get_llm_service, get_conversation_service
+    from .api.dependencies import get_rag_service, get_llm_service, get_reranker_service, get_conversation_service
 
     async def _load_whisper():
         t = time.monotonic()
@@ -48,17 +48,22 @@ async def _preload_models(settings) -> None:
         get_llm_service()
         logger.info(f"LLM provider ready in {time.monotonic()-t:.1f}s")
 
+    def _load_reranker():
+        t = time.monotonic()
+        get_reranker_service()
+        logger.info(f"Reranker ready in {time.monotonic()-t:.1f}s")
+
     def _load_conv():
         get_conversation_service()
 
     loop = asyncio.get_event_loop()
 
-    # Run sync service inits in executor (non-blocking) while async model loads run concurrently
     await asyncio.gather(
         _load_whisper(),
         _load_piper(),
         loop.run_in_executor(None, _load_rag),
         loop.run_in_executor(None, _load_llm),
+        loop.run_in_executor(None, _load_reranker),
         loop.run_in_executor(None, _load_conv),
     )
 
