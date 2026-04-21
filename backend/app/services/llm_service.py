@@ -16,48 +16,48 @@ logger = logging.getLogger(__name__)
 class LLMService:
 
     # ── System Prompts ───────────────────────────────────────────────────────
-    DEFAULT_SYSTEM_PROMPT = """Sen yardımcı bir Türkçe asistansın.
-Sana verilen kaynak belgelerine dayanarak soruları yanıtlıyorsun.
+    DEFAULT_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
+You answer questions based solely on the source documents provided to you.
 
-Kurallar:
-1. Sadece verilen kaynaklardaki bilgilere dayanarak cevap ver
-2. Eğer cevap kaynaklarda yoksa, "Bu konuda kaynaklarda bilgi bulamadım" de
-3. Cevaplarını kısa ve öz tut
-4. Doğal ve akıcı bir Türkçe kullan
-5. Emin olmadığın bilgileri tahmin etme"""
+Rules:
+1. Answer only using information found in the provided sources
+2. If the answer is not in the sources, say "Bu konuda kaynaklarda bilgi bulamadım"
+3. Keep your answers concise and to the point
+4. Respond in natural, fluent Turkish
+5. Do not guess or infer information you are not certain about"""
 
-    CITATION_SYSTEM_PROMPT = """Sen yardımcı bir Türkçe asistansın.
-Sana numaralı kaynak belgeler verilir. Cevap verirken ilgili cümlelerin sonuna [1], [2] gibi kaynak numarası ekle.
+    CITATION_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
+You are given numbered source documents. When answering, append the relevant source number like [1] or [2] after each claim.
 
-Kurallar:
-1. Sadece verilen kaynaklardaki bilgilere dayanarak cevap ver
-2. Her bilginin yanına hangi kaynaktan geldiğini [N] ile belirt
-3. Eğer cevap kaynaklarda yoksa, "Bu konuda kaynaklarda bilgi bulamadım" de
-4. Kısa, akıcı Türkçe kullan"""
+Rules:
+1. Answer only using information found in the provided sources
+2. Mark each piece of information with [N] indicating which source it came from
+3. If the answer is not in the sources, say "Bu konuda kaynaklarda bilgi bulamadım"
+4. Respond in concise, fluent Turkish"""
 
-    FREE_SYSTEM_PROMPT = """Sen yardımsever bir Türkçe asistansın.
-Kullanıcının sorularına doğal ve samimi bir şekilde cevap ver.
-Cevapların kısa ve öz olsun. Türkçe'yi akıcı ve doğru kullan."""
+    FREE_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
+Answer the user's questions naturally and in a friendly tone.
+Keep answers concise. Use clear, correct Turkish."""
 
     # ── Prompt Templates ────────────────────────────────────────────────────
-    CONTEXT_TEMPLATE = """{history_section}Kaynaklar:
+    CONTEXT_TEMPLATE = """{history_section}Sources:
 {context}
 
 ---
-Kullanıcı Sorusu: {query}
+User Question: {query}
 
-Lütfen yukarıdaki kaynaklara dayanarak yanıtla:"""
+Please answer based on the sources above:"""
 
-    QUERY_REWRITE_PROMPT = """Kullanıcının sorusunu belge araması için daha spesifik hale getir.
-Özgün anlamı koru. Yalnızca yeniden yazılmış sorguyu döndür.
+    QUERY_REWRITE_PROMPT = """Rewrite the user's question to be more specific and suitable for document retrieval.
+Preserve the original meaning. Return only the rewritten query, nothing else.
 
-Orijinal: {query}
-Yeniden yazılmış:"""
+Original: {query}
+Rewritten:"""
 
-    MULTI_QUERY_PROMPT = """Aşağıdaki soruyu {n} farklı şekilde yeniden yaz.
-Her satırda bir sorgu olsun. Başka hiçbir şey yazma.
+    MULTI_QUERY_PROMPT = """Rewrite the following question in {n} different ways to improve document retrieval coverage.
+Output one query per line. Do not write anything else.
 
-Soru: {query}"""
+Question: {query}"""
 
     # ────────────────────────────────────────────────────────────────────────
 
