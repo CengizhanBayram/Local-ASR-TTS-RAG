@@ -3,7 +3,9 @@ Voice AI RAG Application
 FastAPI Entry Point
 """
 
+import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -15,7 +17,6 @@ from .api.routes import router
 from .api.websocket_routes import router as ws_router
 from .models.exceptions import VoiceAIException
 
-# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -23,30 +24,65 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _preload_models(settings) -> None:
+    from .services.realtime_service import get_whisper_model, get_piper_voice
+    from .api.dependencies import get_rag_service, get_llm_service, get_conversation_service
+
+    async def _load_whisper():
+        t = time.monotonic()
+        await get_whisper_model(settings)
+        logger.info(f"Whisper ready in {time.monotonic()-t:.1f}s")
+
+    async def _load_piper():
+        t = time.monotonic()
+        await get_piper_voice(settings)
+        logger.info(f"Piper TTS ready in {time.monotonic()-t:.1f}s")
+
+    def _load_rag():
+        t = time.monotonic()
+        get_rag_service()
+        logger.info(f"RAG/embeddings ready in {time.monotonic()-t:.1f}s")
+
+    def _load_llm():
+        t = time.monotonic()
+        get_llm_service()
+        logger.info(f"LLM provider ready in {time.monotonic()-t:.1f}s")
+
+    def _load_conv():
+        get_conversation_service()
+
+    loop = asyncio.get_event_loop()
+
+    # Run sync service inits in executor (non-blocking) while async model loads run concurrently
+    await asyncio.gather(
+        _load_whisper(),
+        _load_piper(),
+        loop.run_in_executor(None, _load_rag),
+        loop.run_in_executor(None, _load_llm),
+        loop.run_in_executor(None, _load_conv),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan events
-    Startup ve shutdown işlemleri
-    """
-    # Startup
-    logger.info("=" * 50)
-    logger.info("🚀 Voice AI RAG Application Starting...")
-    logger.info("=" * 50)
-    
     settings = get_settings()
-    logger.info(f"App: {settings.app_name} v{settings.app_version}")
-    logger.info(f"Debug Mode: {settings.debug}")
-    
-    # Services lazy-loaded on first request
-    logger.info("Services will be initialized on first request")
-    
+
+    logger.info("=" * 60)
+    logger.info(f"  {settings.app_name} v{settings.app_version}  |  provider={settings.llm_provider}")
+    logger.info(f"  whisper={settings.whisper_model_size} device={settings.whisper_device}/{settings.whisper_compute_type}")
+    logger.info(f"  embedding_device={settings.embedding_device}  debug={settings.debug}")
+    logger.info("=" * 60)
+
+    t_start = time.monotonic()
+    try:
+        await _preload_models(settings)
+        logger.info(f"All models loaded in {time.monotonic()-t_start:.1f}s — ready to serve")
+    except Exception as exc:
+        logger.warning(f"Model preload partial failure: {exc}  (will retry on first request)")
+
     yield
-    
-    # Shutdown
-    logger.info("=" * 50)
-    logger.info("👋 Voice AI RAG Application Shutting Down...")
-    logger.info("=" * 50)
+
+    logger.info("Application shutting down.")
 
 
 def create_app() -> FastAPI:

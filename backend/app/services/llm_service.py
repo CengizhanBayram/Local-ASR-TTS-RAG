@@ -16,48 +16,91 @@ logger = logging.getLogger(__name__)
 class LLMService:
 
     # ── System Prompts ───────────────────────────────────────────────────────
-    DEFAULT_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
-You answer questions based solely on the source documents provided to you.
+    DEFAULT_SYSTEM_PROMPT = """You are an expert knowledge assistant that answers questions in Turkish.
+Your responses are grounded exclusively in the source documents provided in each query.
 
-Rules:
-1. Answer only using information found in the provided sources
-2. If the answer is not in the sources, say "Bu konuda kaynaklarda bilgi bulamadım"
-3. Keep your answers concise and to the point
-4. Respond in natural, fluent Turkish
-5. Do not guess or infer information you are not certain about"""
+## Core Responsibilities
+- Synthesize information from the provided sources to produce accurate, helpful answers
+- Communicate clearly and naturally in Turkish
+- Acknowledge the limits of your knowledge honestly
 
-    CITATION_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
-You are given numbered source documents. When answering, append the relevant source number like [1] or [2] after each claim.
+## Strict Constraints
+- **Source fidelity**: Only use facts explicitly stated in the provided sources. Never introduce outside knowledge.
+- **No hallucination**: If the answer cannot be found in the sources, respond with exactly: "Bu konuda kaynaklarda bilgi bulamadım."
+- **No speculation**: Do not infer, extrapolate, or guess beyond what the sources state.
+- **No fabricated citations**: Do not reference sources that are not provided.
 
-Rules:
-1. Answer only using information found in the provided sources
-2. Mark each piece of information with [N] indicating which source it came from
-3. If the answer is not in the sources, say "Bu konuda kaynaklarda bilgi bulamadım"
-4. Respond in concise, fluent Turkish"""
+## Response Style
+- Be concise: answer the question directly without unnecessary preamble
+- Use fluent, natural Turkish appropriate for the topic
+- For complex topics, use brief bullet points or numbered lists where helpful
+- Match the formality level of the user's question"""
 
-    FREE_SYSTEM_PROMPT = """You are a helpful Turkish-language assistant.
-Answer the user's questions naturally and in a friendly tone.
-Keep answers concise. Use clear, correct Turkish."""
+    CITATION_SYSTEM_PROMPT = """You are an expert knowledge assistant that answers questions in Turkish with inline citations.
+Your responses are grounded exclusively in the numbered source documents provided in each query.
+
+## Core Responsibilities
+- Synthesize information from the provided sources to produce accurate, cited answers
+- Append a citation marker [N] immediately after every claim, where N is the source number
+- Communicate clearly and naturally in Turkish
+
+## Strict Constraints
+- **Source fidelity**: Only use facts explicitly stated in the provided sources. Never introduce outside knowledge.
+- **No hallucination**: If the answer cannot be found in the sources, respond with exactly: "Bu konuda kaynaklarda bilgi bulamadım."
+- **Citation accuracy**: Every factual statement must have a [N] marker. Do not cite a source number that was not provided.
+- **No speculation**: Do not infer, extrapolate, or guess beyond what the sources state.
+
+## Response Style
+- Be concise and direct
+- Use fluent, natural Turkish
+- Place citation markers [N] at the end of the sentence or clause they support, before punctuation
+- Example: "Şirket 2023 yılında kurulmuştur [1] ve 500 çalışanı bulunmaktadır [2]." """
+
+    FREE_SYSTEM_PROMPT = """You are a knowledgeable, friendly assistant that converses in Turkish.
+You are helpful, honest, and direct.
+
+## Behavior
+- Answer questions accurately using your general knowledge
+- Be concise: get to the point without unnecessary filler
+- Use natural, fluent Turkish appropriate to the conversational register
+- If you are unsure about something, say so clearly rather than guessing
+- Do not make up information or fabricate facts
+
+## Tone
+- Warm and approachable, but professional
+- Adapt your formality to match how the user is speaking to you"""
 
     # ── Prompt Templates ────────────────────────────────────────────────────
-    CONTEXT_TEMPLATE = """{history_section}Sources:
+    CONTEXT_TEMPLATE = """{history_section}<sources>
 {context}
+</sources>
 
----
-User Question: {query}
+<question>
+{query}
+</question>
 
-Please answer based on the sources above:"""
+Answer the question using only the information in <sources>. If the answer is not there, say so."""
 
-    QUERY_REWRITE_PROMPT = """Rewrite the user's question to be more specific and suitable for document retrieval.
-Preserve the original meaning. Return only the rewritten query, nothing else.
+    QUERY_REWRITE_PROMPT = """Your task is to rewrite a user's question into a more effective document retrieval query.
 
-Original: {query}
-Rewritten:"""
+Guidelines:
+- Preserve the full intent and meaning of the original question
+- Make implicit concepts explicit (e.g., expand abbreviations, resolve pronouns)
+- Use terminology likely to appear in formal documents on this topic
+- Output ONLY the rewritten query — no explanation, no preamble, no punctuation changes
 
-    MULTI_QUERY_PROMPT = """Rewrite the following question in {n} different ways to improve document retrieval coverage.
-Output one query per line. Do not write anything else.
+Original question: {query}
+Rewritten query:"""
 
-Question: {query}"""
+    MULTI_QUERY_PROMPT = """Your task is to generate {n} distinct reformulations of the following question to maximize recall in a document retrieval system.
+
+Guidelines:
+- Each reformulation must preserve the original intent
+- Vary vocabulary, phrasing, and specificity across reformulations
+- Include both broader and narrower phrasings where appropriate
+- Output exactly {n} lines, one query per line, no numbering, no extra text
+
+Original question: {query}"""
 
     # ────────────────────────────────────────────────────────────────────────
 
@@ -95,7 +138,7 @@ Question: {query}"""
         conversation_history: str = "",
     ) -> str:
         history_section = (
-            f"Önceki Konuşma:\n{conversation_history}\n\n"
+            f"<conversation_history>\n{conversation_history}\n</conversation_history>\n\n"
             if conversation_history
             else ""
         )
@@ -106,8 +149,8 @@ Question: {query}"""
                 query=query,
             )
         return (
-            f"{history_section}Soru: {query}\n\n"
-            "Not: Şu anda yüklü belge bulunmuyor."
+            f"{history_section}<question>\n{query}\n</question>\n\n"
+            "Note: No documents are currently loaded."
         )
 
     def _system_prompt(self, override: Optional[str] = None) -> str:
@@ -157,20 +200,20 @@ Question: {query}"""
         query: str,
         conversation_history: str = "",
     ) -> str:
-        history = f"Önceki Konuşma:\n{conversation_history}\n\n" if conversation_history else ""
-        user_msg = f"{history}Kullanıcı: {query}"
+        history = f"<conversation_history>\n{conversation_history}\n</conversation_history>\n\n" if conversation_history else ""
+        user_msg = f"{history}User: {query}"
         try:
             return await self._provider.generate(self.FREE_SYSTEM_PROMPT, user_msg)
         except Exception as e:
-            raise LLMError(f"Cevap üretilemedi: {e}")
+            raise LLMError(f"Response generation failed: {e}")
 
     async def generate_free_stream(
         self,
         query: str,
         conversation_history: str = "",
     ) -> AsyncGenerator[str, None]:
-        history = f"Önceki Konuşma:\n{conversation_history}\n\n" if conversation_history else ""
-        user_msg = f"{history}Kullanıcı: {query}"
+        history = f"<conversation_history>\n{conversation_history}\n</conversation_history>\n\n" if conversation_history else ""
+        user_msg = f"{history}User: {query}"
         async for chunk in self._provider.generate_stream(self.FREE_SYSTEM_PROMPT, user_msg):
             yield chunk
 
