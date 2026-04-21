@@ -10,25 +10,36 @@ python-multipart>=0.0.6
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
+# HTTP Client (provider calls)
+httpx>=0.26.0
+
 # LLM - Google Gemini
 google-generativeai>=0.8.0
 
-# STT - Faster Whisper (local, no API needed)
+# STT - Faster Whisper (local)
 faster-whisper>=1.0.0
 
-# TTS - Piper (local, no API needed)
+# TTS - Piper (local)
 piper-tts>=1.2.0
 
 # Vector Database - ChromaDB
 chromadb>=0.4.22
 
-# Embeddings
+# Embeddings + Reranker
 sentence-transformers>=2.3.1
+
+# BM25 Hybrid Search
+rank-bm25>=0.2.2
 
 # Document Processing
 PyPDF2>=3.0.1
 pdfplumber>=0.10.3
 python-docx>=1.1.0
+Pillow>=10.0.0
+
+# OCR (optional — set ENABLE_OCR=true and install these manually)
+# pdf2image>=1.17.0
+# pytesseract>=0.3.10
 
 # Utilities
 python-dotenv>=1.0.0
