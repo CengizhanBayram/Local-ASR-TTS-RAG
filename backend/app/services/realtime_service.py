@@ -37,7 +37,21 @@ def _load_piper_sync(model_path: str):
     from piper import PiperVoice
     use_cuda = "CUDAExecutionProvider" in ort.get_available_providers()
     logger.info(f"Loading Piper TTS: {model_path} (CUDA={use_cuda})")
-    return PiperVoice.load(model_path, use_cuda=use_cuda)
+    voice = PiperVoice.load(model_path, use_cuda=use_cuda)
+
+    # Replace the session with an optimized one to maximize throughput
+    sess_opts = ort.SessionOptions()
+    sess_opts.intra_op_num_threads = 64
+    sess_opts.inter_op_num_threads = 64
+    sess_opts.execution_mode = ort.ExecutionMode.ORT_PARALLEL
+    sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    if use_cuda:
+        providers = [("CUDAExecutionProvider", {}), "CPUExecutionProvider"]
+    else:
+        providers = ["CPUExecutionProvider"]
+    voice.session = ort.InferenceSession(model_path, sess_options=sess_opts, providers=providers)
+    logger.info(f"Piper ONNX session rebuilt: threads=64/64 parallel, providers={providers}")
+    return voice
 
 
 async def get_whisper_model(settings):
