@@ -39,18 +39,16 @@ def _load_piper_sync(model_path: str):
     logger.info(f"Loading Piper TTS: {model_path} (CUDA={use_cuda})")
     voice = PiperVoice.load(model_path, use_cuda=use_cuda)
 
-    # Replace the session with an optimized one to maximize throughput
+    # Rebuild ONNX session with tuned thread count — benchmark showed 8 threads is optimal
+    # (64/128 threads add contention overhead; GPU is slower due to 28 Memcpy nodes)
     sess_opts = ort.SessionOptions()
-    sess_opts.intra_op_num_threads = 64
-    sess_opts.inter_op_num_threads = 64
+    sess_opts.intra_op_num_threads = 8
+    sess_opts.inter_op_num_threads = 8
     sess_opts.execution_mode = ort.ExecutionMode.ORT_PARALLEL
     sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    if use_cuda:
-        providers = [("CUDAExecutionProvider", {}), "CPUExecutionProvider"]
-    else:
-        providers = ["CPUExecutionProvider"]
+    providers = ["CPUExecutionProvider"]
     voice.session = ort.InferenceSession(model_path, sess_options=sess_opts, providers=providers)
-    logger.info(f"Piper ONNX session rebuilt: threads=64/64 parallel, providers={providers}")
+    logger.info("Piper ONNX session rebuilt: 8 threads, ORT_PARALLEL, CPU-only (fastest for this model)")
     return voice
 
 
