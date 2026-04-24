@@ -153,3 +153,14 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     status_code: int
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
+class TTSResponse(BaseModel):
+    audio_base64: str
+    tts_ms: float
+    text_length: int
+    audio_size_kb: float

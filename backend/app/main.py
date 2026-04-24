@@ -6,11 +6,13 @@ FastAPI Entry Point
 import asyncio
 import logging
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .api.routes import router
@@ -144,15 +146,32 @@ Azure servisleri ile gerçek zamanlı sesli soru-cevap sistemi.
     app.include_router(router, prefix="/api")
     app.include_router(ws_router, prefix="/api")
     
-    # Root endpoint
-    @app.get("/", tags=["Root"])
-    async def root():
-        return {
-            "message": "Voice AI RAG API",
-            "version": settings.app_version,
-            "docs": "/docs",
-            "health": "/api/health"
-        }
+    # Serve frontend static files
+    frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
+    if frontend_dir.exists():
+        # Mount static files (CSS, JS)
+        app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="frontend_static")
+        
+        @app.get("/", tags=["Root"])
+        async def root():
+            return FileResponse(str(frontend_dir / "index.html"))
+        
+        @app.get("/styles.css")
+        async def serve_css():
+            return FileResponse(str(frontend_dir / "styles.css"), media_type="text/css")
+        
+        @app.get("/app.js")
+        async def serve_js():
+            return FileResponse(str(frontend_dir / "app.js"), media_type="application/javascript")
+    else:
+        @app.get("/", tags=["Root"])
+        async def root():
+            return {
+                "message": "Voice AI RAG API",
+                "version": settings.app_version,
+                "docs": "/docs",
+                "health": "/api/health"
+            }
     
     return app
 

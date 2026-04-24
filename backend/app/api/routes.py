@@ -6,7 +6,7 @@ import json
 import time
 import base64
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,6 +30,8 @@ from ..models.schemas import (
     HealthResponse,
     ErrorResponse,
     PipelineMetrics,
+    TTSRequest,
+    TTSResponse,
 )
 from ..models.exceptions import VoiceAIException, NoDocumentsError
 from ..services.speech_service import SpeechService
@@ -375,12 +377,15 @@ async def chat_stream(
         context = ""
         sources: List[SourceDocument] = []
         total_retrieved = 0
+        retrieval_ms = rewrite_ms = 0.0
 
         try:
             # Query rewrite
             search_query = request.query
             if settings.enable_query_rewriting and request.mode == "rag":
+                t_rw = time.time()
                 search_query = await llm_service.rewrite_query(request.query)
+                rewrite_ms = round((time.time() - t_rw) * 1000, 2)
                 if search_query != request.query:
                     rewritten_query = search_query
                     yield f"data: {json.dumps({'type': 'rewrite', 'query': rewritten_query})}\n\n"
@@ -393,7 +398,7 @@ async def chat_stream(
                         extra_queries = await llm_service.generate_query_variations(
                             search_query, settings.multi_query_count
                         )
-                    context, sources, total_retrieved, _ = await _run_rag_pipeline(
+                    context, sources, total_retrieved, retrieval_ms = await _run_rag_pipeline(
                         search_query, rag_service, llm_service, reranker_service, settings,
                         extra_queries=extra_queries,
                     )
@@ -402,6 +407,7 @@ async def chat_stream(
                     pass
 
             # Stream LLM tokens
+            t_llm = time.time()
             full_answer = ""
             if request.mode == "free":
                 gen = llm_service.generate_free_stream(request.query, conversation_history=history_text)
@@ -414,13 +420,15 @@ async def chat_stream(
                 full_answer += chunk
                 yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
 
+            llm_ms = round((time.time() - t_llm) * 1000, 2)
+
             # Save to conversation
             conv_service.add_user_message(session_id, request.query)
             conv_service.add_assistant_message(session_id, full_answer)
             turn_count = conv_service.get_turn_count(session_id)
             total_ms   = round((time.time() - t0) * 1000, 2)
 
-            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'turn': turn_count, 'rewritten_query': rewritten_query, 'metrics': {'total_ms': total_ms, 'docs_retrieved': total_retrieved, 'docs_after_threshold': len(sources)}})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'turn': turn_count, 'rewritten_query': rewritten_query, 'metrics': {'total_ms': total_ms, 'retrieval_ms': retrieval_ms, 'rewrite_ms': rewrite_ms if rewrite_ms else None, 'llm_ms': llm_ms, 'docs_retrieved': total_retrieved, 'docs_after_threshold': len(sources)}})}\n\n"
 
         except Exception as e:
             logger.error(f"SSE stream error: {e}")
@@ -520,3 +528,24 @@ async def voice_query(
 @router.get("/voice/voices", tags=["Voice"])
 async def get_available_voices(speech_service: SpeechService = Depends(get_speech_service)):
     return {"voices": speech_service.get_available_voices(), "current": get_settings().piper_model_path}
+
+
+# ── Dedicated TTS endpoint ────────────────────────────────────────────────────
+
+@router.post("/tts", response_model=TTSResponse, tags=["Voice"])
+async def text_to_speech(
+    request: TTSRequest,
+    speech_service: SpeechService = Depends(get_speech_service),
+):
+    """Metni sese çevirir. tts_ms ile geçen süreyi ms cinsinden döner."""
+    t0 = time.time()
+    audio_base64 = await speech_service.synthesize_to_base64(request.text)
+    tts_ms = round((time.time() - t0) * 1000, 2)
+    audio_bytes = len(audio_base64) * 3 // 4
+    logger.info(f"TTS: {len(request.text)} chars → {audio_bytes} bytes in {tts_ms}ms")
+    return TTSResponse(
+        audio_base64=audio_base64,
+        tts_ms=tts_ms,
+        text_length=len(request.text),
+        audio_size_kb=round(audio_bytes / 1024, 1),
+    )

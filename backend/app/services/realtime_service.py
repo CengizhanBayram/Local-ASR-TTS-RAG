@@ -225,7 +225,7 @@ class RealtimeSynthesizer:
         def _run():
             wav_io = io.BytesIO()
             with wave.open(wav_io, "wb") as wf:
-                voice.synthesize(text, wf)
+                voice.synthesize_wav(text, wf)
             return wav_io.getvalue()
 
         loop = asyncio.get_event_loop()

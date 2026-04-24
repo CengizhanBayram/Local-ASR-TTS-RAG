@@ -81,7 +81,7 @@ class RAGService:
             logger.warning("rank_bm25 not installed — hybrid search disabled")
             return
 
-        results = self._collection.get(include=["documents", "ids"])
+        results = self._collection.get(include=["documents"])
         if not results or not results.get("documents"):
             self._bm25 = None
             self._bm25_ids = []
