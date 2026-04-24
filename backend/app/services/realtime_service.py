@@ -33,9 +33,11 @@ def _load_whisper_sync(model_size: str, device: str, compute_type: str):
 
 
 def _load_piper_sync(model_path: str):
+    import onnxruntime as ort
     from piper import PiperVoice
-    logger.info(f"Loading Piper TTS: {model_path}")
-    return PiperVoice.load(model_path)
+    use_cuda = "CUDAExecutionProvider" in ort.get_available_providers()
+    logger.info(f"Loading Piper TTS: {model_path} (CUDA={use_cuda})")
+    return PiperVoice.load(model_path, use_cuda=use_cuda)
 
 
 async def get_whisper_model(settings):
