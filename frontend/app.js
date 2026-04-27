@@ -143,16 +143,20 @@ function setMode(mode) {
     state.chatMode = mode;
     elements.modeRag?.classList.toggle('active',  mode === 'rag');
     elements.modeFree?.classList.toggle('active', mode === 'free');
-    if (elements.modeIndicator) {
-        if (mode === 'rag') {
-            elements.modeIndicator.className = 'mode-badge';
-            elements.modeIndicator.innerHTML = '<i class="fas fa-book-open"></i><span>RAG Mode</span>';
-        } else {
-            elements.modeIndicator.className = 'mode-badge free';
-            elements.modeIndicator.innerHTML = '<i class="fas fa-comments"></i><span>Free Mode</span>';
-        }
+    const desc = document.getElementById('mode-desc');
+    if (desc) {
+        desc.textContent = mode === 'rag'
+            ? 'Belgelerinize sesli sorular sorun, sesli cevaplar alın'
+            : 'Belge olmadan doğrudan yapay zeka ile sohbet edin';
     }
-    showToast('info', 'Mode Changed', mode === 'rag' ? 'RAG Mode (Document-based)' : 'Free Mode (General Chat)');
+    const voiceStatus = elements.voiceStatus;
+    if (voiceStatus && state.currentState === 'idle') {
+        voiceStatus.textContent = 'Konuşmak için mikrofona basın 🎙️';
+    }
+    showToast('info',
+        mode === 'rag' ? 'Belge RAG Modu' : 'Serbest Sohbet Modu',
+        mode === 'rag' ? 'Belgelerden yanıt üretiliyor' : 'Doğrudan yapay zeka ile konuşuluyor'
+    );
 }
 
 // ============================================================
