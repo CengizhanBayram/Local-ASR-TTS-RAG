@@ -394,6 +394,7 @@ class RealtimeVoicePipeline:
             full_answer_parts: list = []
             pcm_parts:         list = []
             wav_params:        list = [None]   # [tuple | None], mutated by emit_audio
+            tts_ms_total:      list = [0]      # cumulative TTS synthesis time
             t_llm_start = time.monotonic()
 
             async def produce_sentences():
@@ -428,30 +429,36 @@ class RealtimeVoicePipeline:
                         break
                     order, sentence = item
                     try:
-                        audio = await self.synthesizer.synthesize_full(sentence)
-                        await audio_q.put((order, audio))
+                        t_tts = time.monotonic()
+                        audio, fmt = await self.synthesizer.synthesize_full(sentence)
+                        tts_ms_total[0] += round((time.monotonic() - t_tts) * 1000)
+                        await audio_q.put((order, audio, fmt))
                     except Exception as e:
                         logger.error(f"TTS sentence error: {e}")
 
             async def emit_audio():
-                """Send each complete sentence WAV immediately — no waiting for all TTS."""
+                """Send each complete sentence audio immediately — no waiting for all TTS."""
                 while True:
                     item = await audio_q.get()
                     if item is None:
                         break
-                    _, audio_data = item
-                    try:
-                        pcm, sr, ch, sw = self._wav_info(audio_data)
-                        pcm_parts.append(pcm)
-                        if wav_params[0] is None:
-                            wav_params[0] = (sr, ch, sw)
-                    except Exception:
+                    _, audio_data, fmt = item
+                    if fmt == "wav":
+                        try:
+                            pcm, sr, ch, sw = self._wav_info(audio_data)
+                            pcm_parts.append(pcm)
+                            if wav_params[0] is None:
+                                wav_params[0] = (sr, ch, sw)
+                        except Exception:
+                            pcm_parts.append(audio_data)
+                    else:
+                        # MP3: concatenate for combined replay
                         pcm_parts.append(audio_data)
-                    # Send the full sentence WAV in one message — never split,
-                    # a partial WAV header causes decodeAudioData to fail in browser.
+                    # Send full sentence audio in one WebSocket message.
+                    # Never split — a partial WAV/MP3 cannot be decoded by the browser.
                     self._emit("audio_chunk", {
                         "data": base64.b64encode(audio_data).decode(),
-                        "format": "wav",
+                        "format": fmt,
                     })
 
             # All three run concurrently: LLM generates while TTS encodes while
