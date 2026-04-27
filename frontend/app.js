@@ -198,7 +198,7 @@ function handleWsMessage(event) {
             case 'transcription': handleTranscription(data.text, data.is_final); break;
             case 'user_message':  finalizeUserMessage(data.text); break;
             case 'answer_token':  handleAnswerToken(data.text); break;
-            case 'answer':        handleAnswer(data.text, data.sources || []); break;
+            case 'answer':        handleAnswer(data.text, data.sources || [], data.total_ms); break;
             case 'audio_chunk':   handleAudioChunk(data.data); break;
             case 'audio_complete': handleAudioComplete(data.full_audio); break;
             case 'error':         handleError(data.message); break;
@@ -393,11 +393,15 @@ function handleAnswerToken(token) {
     }
     appendStreamToken(state.currentAssistantMsgId, token);
 }
-function handleAnswer(text, sources) {
+function handleAnswer(text, sources, totalMs) {
+    const responseTimeSec = totalMs != null
+        ? totalMs / 1000
+        : (state.queryStartTime ? (Date.now() - state.queryStartTime) / 1000 : null);
+    state.queryStartTime = null;
     if (state.currentAssistantMsgId) {
-        finalizeStreamingMessage(state.currentAssistantMsgId, text, sources);
+        finalizeStreamingMessage(state.currentAssistantMsgId, text, sources, null, null, responseTimeSec);
     } else {
-        state.currentAssistantMsgId = addAssistantMessage(text, sources, true);
+        state.currentAssistantMsgId = addAssistantMessage(text, sources, true, null, null, null, responseTimeSec);
     }
     state.audioQueue = [];
     state.fullAudioBuffer = null;
@@ -555,6 +559,7 @@ async function sendTextMessage() {
                     if (evt.session_id) saveSession(evt.session_id);
                     if (evt.turn)       updateTurnCount(evt.turn);
                     metrics = evt.metrics;
+                    state.queryStartTime = null;
                     // Finalize the streaming message with full content
                     const msgEl = document.getElementById(streamMsgId);
                     const fullText = msgEl?.querySelector('.stream-text')?.textContent || '';
@@ -638,22 +643,23 @@ function appendStreamToken(msgId, token) {
     if (textEl) { textEl.textContent += token; scrollToBottom(); }
 }
 
-function finalizeStreamingMessage(msgId, text, sources = [], metrics = null, rewrittenQuery = null) {
+function finalizeStreamingMessage(msgId, text, sources = [], metrics = null, rewrittenQuery = null, responseTimeSec = null) {
     const msgEl = document.getElementById(msgId);
     if (!msgEl) return;
     msgEl.classList.remove('streaming');
     const textContainer = msgEl.querySelector('.text');
     if (!textContainer) return;
-    textContainer.innerHTML = buildAssistantHTML(text, sources, metrics, rewrittenQuery, false, null);
+    const timeSec = responseTimeSec ?? (metrics?.total_ms != null ? metrics.total_ms / 1000 : null);
+    textContainer.innerHTML = buildAssistantHTML(text, sources, metrics, rewrittenQuery, false, null, timeSec);
     scrollToBottom();
 }
 
-function addAssistantMessage(text, sources = [], isStreaming = false, audioBase64 = null, metrics = null, rewrittenQuery = null) {
+function addAssistantMessage(text, sources = [], isStreaming = false, audioBase64 = null, metrics = null, rewrittenQuery = null, responseTimeSec = null) {
     const id = `msg-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
     const div = document.createElement('div');
     div.id = id; div.className = 'message assistant';
     div.innerHTML = `<div class="message-content"><div class="text">${
-        buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming, audioBase64)
+        buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming, audioBase64, responseTimeSec)
     }</div></div>`;
     elements.messages.appendChild(div);
     scrollToBottom();
@@ -664,7 +670,14 @@ function addAssistantMessage(text, sources = [], isStreaming = false, audioBase6
     return id;
 }
 
-function buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming, audioBase64) {
+function buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming, audioBase64, responseTimeSec = null) {
+    // Response time badge
+    let timeBadge = '';
+    if (responseTimeSec != null) {
+        const label = responseTimeSec < 10 ? responseTimeSec.toFixed(1) + 's' : Math.round(responseTimeSec) + 's';
+        timeBadge = `<div class="response-time-badge">⚡ ${label}</div>`;
+    }
+
     // Sources
     let sourcesHtml = '';
     if (sources?.length > 0) {
@@ -712,7 +725,7 @@ function buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming,
         </div>`;
     }
 
-    return `<p>${formatText(text)}</p>${audioHtml}${rewriteHtml}${sourcesHtml}${metricsHtml}`;
+    return `${timeBadge}<p>${formatText(text)}</p>${audioHtml}${rewriteHtml}${sourcesHtml}${metricsHtml}`;
 }
 
 function addLoadingMessage() {
