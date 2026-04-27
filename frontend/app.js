@@ -203,9 +203,9 @@ function handleWsMessage(event) {
             case 'transcription': handleTranscription(data.text, data.is_final); break;
             case 'user_message':  finalizeUserMessage(data.text); break;
             case 'answer_token':  handleAnswerToken(data.text); break;
-            case 'answer':        handleAnswer(data.text, data.sources || [], data.total_ms); break;
+            case 'answer':        handleAnswer(data.text, data.sources || [], data.metrics); break;
             case 'audio_chunk':   handleAudioChunk(data.data); break;
-            case 'audio_complete': handleAudioComplete(data.full_audio); break;
+            case 'audio_complete': handleAudioComplete(data.full_audio, data.format || 'wav'); break;
             case 'error':         handleError(data.message); break;
             case 'pong': break;
             case 'canceled':      handleCanceled(); break;
@@ -407,15 +407,12 @@ function handleAnswerToken(token) {
     }
     appendStreamToken(state.currentAssistantMsgId, token);
 }
-function handleAnswer(text, sources, totalMs) {
-    const responseTimeSec = totalMs != null
-        ? totalMs / 1000
-        : (state.queryStartTime ? (Date.now() - state.queryStartTime) / 1000 : null);
+function handleAnswer(text, sources, metrics) {
     state.queryStartTime = null;
     if (state.currentAssistantMsgId) {
-        finalizeStreamingMessage(state.currentAssistantMsgId, text, sources, null, null, responseTimeSec);
+        finalizeStreamingMessage(state.currentAssistantMsgId, text, sources, metrics, null, null);
     } else {
-        state.currentAssistantMsgId = addAssistantMessage(text, sources, true, null, null, null, responseTimeSec);
+        state.currentAssistantMsgId = addAssistantMessage(text, sources, true, null, metrics, null, null);
     }
     state.audioQueue = [];
     state.fullAudioBuffer = null;
@@ -451,8 +448,9 @@ function handleAudioChunk(base64Data) {
         } catch (_) {}
     });
 }
-function handleAudioComplete(fullAudioBase64) {
+function handleAudioComplete(fullAudioBase64, format = 'wav') {
     state.fullAudioBuffer = fullAudioBase64;
+    state.fullAudioFormat = format;
     const msgEl = document.getElementById(state.currentAssistantMsgId);
     if (msgEl) {
         const audioDiv = msgEl.querySelector('.message-audio');
@@ -463,7 +461,7 @@ function handleAudioComplete(fullAudioBase64) {
             if (btn) {
                 btn.classList.remove('playing');
                 btn.innerHTML = '<i class="fas fa-play"></i>';
-                btn.onclick = () => playStoredAudio(fullAudioBase64, btn);
+                btn.onclick = () => playStoredAudio(fullAudioBase64, btn, format);
             }
         }
     }
@@ -482,14 +480,15 @@ function handleError(message) {
     handleStateChange('idle');
 }
 function handleCanceled() { handleStateChange('idle'); showToast('info', 'Cancelled', 'Operation cancelled'); }
-function playStoredAudio(base64Audio, btn) {
+function playStoredAudio(base64Audio, btn, format = 'wav') {
     const wave = btn.nextElementSibling;
     const icon = btn.querySelector('i');
     if (state.isPlaying) {
         if (state.playbackContext) { state.playbackContext.close(); state.playbackContext = null; }
         state.isPlaying = false; icon.className = 'fas fa-play'; wave?.classList.remove('playing'); return;
     }
-    const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
+    const mimeType = format === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+    const audio = new Audio(`data:${mimeType};base64,${base64Audio}`);
     audio.onplay  = () => { state.isPlaying = true;  icon.className = 'fas fa-pause'; wave?.classList.add('playing'); };
     audio.onended = () => { state.isPlaying = false; icon.className = 'fas fa-play';  wave?.classList.remove('playing'); };
     audio.onerror = () => { showToast('error', 'Audio Error', 'Playback failed'); icon.className = 'fas fa-play'; };
@@ -723,7 +722,7 @@ function buildAssistantHTML(text, sources, metrics, rewrittenQuery, isStreaming,
         const parts = [];
         if (metrics.stt_ms      != null) parts.push(`<span class="metric-item"><i class="fas fa-microphone"></i>STT <span class="val">${metrics.stt_ms.toFixed(0)}ms</span></span>`);
         if (metrics.rewrite_ms  != null) parts.push(`<span class="metric-item"><i class="fas fa-pen"></i>Rewrite <span class="val">${metrics.rewrite_ms.toFixed(0)}ms</span></span>`);
-        if (metrics.retrieval_ms!= null) parts.push(`<span class="metric-item"><i class="fas fa-magnifying-glass"></i>RAG <span class="val">${metrics.retrieval_ms.toFixed(0)}ms</span></span>`);
+        if (metrics.rag_ms      != null) parts.push(`<span class="metric-item"><i class="fas fa-magnifying-glass"></i>RAG <span class="val">${metrics.rag_ms.toFixed(0)}ms</span></span>`);
         if (metrics.llm_ms      != null) parts.push(`<span class="metric-item"><i class="fas fa-brain"></i>LLM <span class="val">${metrics.llm_ms.toFixed(0)}ms</span></span>`);
         if (metrics.tts_ms      != null) parts.push(`<span class="metric-item"><i class="fas fa-volume-high"></i>TTS <span class="val">${metrics.tts_ms.toFixed(0)}ms</span></span>`);
         if (metrics.docs_after_threshold != null) parts.push(`<span class="metric-item"><i class="fas fa-filter"></i>Docs <span class="val">${metrics.docs_after_threshold}/${metrics.docs_retrieved ?? '?'}</span></span>`);
