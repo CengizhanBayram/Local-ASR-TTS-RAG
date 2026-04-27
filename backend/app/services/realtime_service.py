@@ -349,14 +349,21 @@ class RealtimeVoicePipeline:
 
             self._set_state(StreamState.SPEAKING)
 
-            # ── Parallel LLM→TTS ─────────────────────────────────────────────
-            # Producer puts complete sentences into sentence_q.
-            # Consumer TTS-encodes each sentence and puts audio into audio_q in order.
-            # Main loop drains audio_q and emits chunks as they arrive.
+            # ── 3-stage streaming pipeline ────────────────────────────────────
+            # produce_sentences : LLM tokens → sentence boundaries → sentence_q
+            # consume_sentences : sentence_q → Piper TTS → audio_q
+            # emit_audio        : audio_q → WebSocket (fires as each sentence is ready)
+            #
+            # Audio starts playing on the CLIENT after the FIRST sentence TTS completes,
+            # not after the whole response — eliminates the long wait for long answers.
+            # The client-side audioChain schedules each WAV after the previous one ends,
+            # so no words ever overlap.
 
             sentence_q: asyncio.Queue = asyncio.Queue()
-            audio_q:    asyncio.Queue = asyncio.Queue()  # (order, bytes)
-            full_answer_parts = []
+            audio_q:    asyncio.Queue = asyncio.Queue()
+            full_answer_parts: list = []
+            pcm_parts:         list = []
+            wav_params:        list = [None]   # [tuple | None], mutated by emit_audio
             t_llm_start = time.monotonic()
 
             async def produce_sentences():
@@ -396,10 +403,32 @@ class RealtimeVoicePipeline:
                     except Exception as e:
                         logger.error(f"TTS sentence error: {e}")
 
-            # Run producer & consumer concurrently (90s timeout prevents infinite hangs)
+            async def emit_audio():
+                """Send each complete sentence WAV immediately — no waiting for all TTS."""
+                while True:
+                    item = await audio_q.get()
+                    if item is None:
+                        break
+                    _, audio_data = item
+                    try:
+                        pcm, sr, ch, sw = self._wav_info(audio_data)
+                        pcm_parts.append(pcm)
+                        if wav_params[0] is None:
+                            wav_params[0] = (sr, ch, sw)
+                    except Exception:
+                        pcm_parts.append(audio_data)
+                    # Send the full sentence WAV in one message — never split,
+                    # a partial WAV header causes decodeAudioData to fail in browser.
+                    self._emit("audio_chunk", {
+                        "data": base64.b64encode(audio_data).decode(),
+                        "format": "wav",
+                    })
+
+            # All three run concurrently: LLM generates while TTS encodes while
+            # network sends — overlap hides latency at every stage.
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(produce_sentences(), consume_sentences()),
+                    asyncio.gather(produce_sentences(), consume_sentences(), emit_audio()),
                     timeout=90.0,
                 )
             except asyncio.TimeoutError:
@@ -409,38 +438,26 @@ class RealtimeVoicePipeline:
 
             llm_ms = round((time.monotonic() - t_llm_start) * 1000)
 
-            # Drain audio queue in order and emit
+            # Finalize text response
             full_answer = "".join(full_answer_parts)
             if self.conv_service and self.session_id:
                 self.conv_service.add_user_message(self.session_id, query)
                 self.conv_service.add_assistant_message(self.session_id, full_answer)
 
             total_ms = round((time.monotonic() - t0) * 1000)
-            self._emit("answer", {"text": full_answer, "sources": sources, "total_ms": total_ms, "llm_ms": llm_ms})
+            self._emit("answer", {
+                "text": full_answer,
+                "sources": sources,
+                "total_ms": total_ms,
+                "llm_ms": llm_ms,
+            })
 
-            # Drain audio queue and send each complete sentence WAV as one chunk.
-            # Do NOT split WAVs into sub-chunks — a partial WAV cannot be decoded by the browser.
-            pcm_parts = []
-            wav_params = None  # (sample_rate, channels, sampwidth) from first sentence
-            while True:
-                item = await audio_q.get()
-                if item is None:
-                    break
-                _, audio_data = item
-                try:
-                    pcm, sr, ch, sw = self._wav_info(audio_data)
-                    pcm_parts.append(pcm)
-                    if wav_params is None:
-                        wav_params = (sr, ch, sw)
-                except Exception:
-                    pcm_parts.append(audio_data)
-                b64 = base64.b64encode(audio_data).decode()
-                self._emit("audio_chunk", {"data": b64, "format": "wav"})
-
-            if pcm_parts and wav_params:
-                combined_wav = self._build_wav(b"".join(pcm_parts), *wav_params)
-                full_b64 = base64.b64encode(combined_wav).decode()
-                self._emit("audio_complete", {"full_audio": full_b64})
+            # Send combined WAV for the replay button (all sentences merged into one valid WAV)
+            if pcm_parts and wav_params[0]:
+                combined_wav = self._build_wav(b"".join(pcm_parts), *wav_params[0])
+                self._emit("audio_complete", {
+                    "full_audio": base64.b64encode(combined_wav).decode(),
+                })
 
         except Exception as e:
             logger.error(f"Pipeline error: {e}")
