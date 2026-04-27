@@ -84,9 +84,10 @@ body::before {
     right: 0;
     bottom: 0;
     background:
-        radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
-        radial-gradient(ellipse at 50% 50%, rgba(168, 85, 247, 0.05) 0%, transparent 70%);
+        radial-gradient(ellipse at 15% 15%, rgba(99, 102, 241, 0.22) 0%, transparent 45%),
+        radial-gradient(ellipse at 85% 85%, rgba(192, 38, 211, 0.18) 0%, transparent 45%),
+        radial-gradient(ellipse at 50% 50%, rgba(139, 92, 246, 0.08) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 35%);
     pointer-events: none;
     z-index: -1;
 }
@@ -103,12 +104,13 @@ body::before {
    ============================================ */
 .sidebar {
     width: var(--sidebar-width);
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--glass-border);
+    background: linear-gradient(180deg, #0e0e1c 0%, #0a0a14 100%);
+    border-right: 1px solid rgba(124, 127, 255, 0.15);
     display: flex;
     flex-direction: column;
     position: relative;
     z-index: 100;
+    box-shadow: 4px 0 24px rgba(99, 102, 241, 0.08);
 }
 
 .sidebar-header {
@@ -131,6 +133,13 @@ body::before {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    filter: drop-shadow(0 0 8px rgba(124, 127, 255, 0.6));
+    animation: logoGlow 3s ease-in-out infinite;
+}
+
+@keyframes logoGlow {
+    0%, 100% { filter: drop-shadow(0 0 6px rgba(124, 127, 255, 0.5)); }
+    50%       { filter: drop-shadow(0 0 14px rgba(192, 38, 211, 0.7)); }
 }
 
 .sidebar-nav {
@@ -405,13 +414,15 @@ body::before {
 }
 
 .message.assistant .message-content {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--glass-border);
+    background: linear-gradient(135deg, rgba(20, 20, 36, 0.95) 0%, rgba(14, 14, 26, 0.9) 100%);
+    border: 1px solid rgba(124, 127, 255, 0.18);
+    box-shadow: 0 4px 24px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 .message.user .message-content {
-    background: var(--accent-gradient);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #c026d3 100%);
     color: white;
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
 }
 
 .message .text p {
@@ -574,8 +585,9 @@ body::before {
 /* Input Area */
 .input-area {
     padding: 24px 40px 32px;
-    border-top: 1px solid var(--glass-border);
-    background: var(--bg-secondary);
+    border-top: 1px solid rgba(124, 127, 255, 0.12);
+    background: linear-gradient(0deg, rgba(10, 10, 20, 0.98) 0%, rgba(14, 14, 26, 0.9) 100%);
+    backdrop-filter: blur(20px);
 }
 
 .voice-controls {
@@ -586,21 +598,22 @@ body::before {
 }
 
 .voice-btn {
-    width: 80px;
-    height: 80px;
+    width: 90px;
+    height: 90px;
     border-radius: var(--radius-full);
     border: none;
-    background: var(--accent-gradient);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #c026d3 100%);
     color: white;
-    font-size: 2rem;
+    font-size: 2.2rem;
     cursor: pointer;
     position: relative;
     transition: all var(--transition-normal);
-    box-shadow: var(--shadow-glow);
+    box-shadow: 0 0 0 0 rgba(124, 127, 255, 0.5), 0 8px 32px rgba(99, 102, 241, 0.5);
 }
 
 .voice-btn:hover {
-    transform: scale(1.05);
+    transform: scale(1.08);
+    box-shadow: 0 0 0 4px rgba(124, 127, 255, 0.25), 0 8px 40px rgba(99, 102, 241, 0.65);
 }
 
 .voice-btn:active,
