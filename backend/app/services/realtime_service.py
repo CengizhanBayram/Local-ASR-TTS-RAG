@@ -198,6 +198,26 @@ class RealtimeTranscriber:
         pass
 
 
+class EdgeTTSSynthesizer:
+    """Microsoft Edge TTS — en iyi Türkçe kalitesi, streaming MP3."""
+
+    def __init__(self, settings):
+        self.voice = settings.edge_tts_voice
+
+    async def synthesize_full(self, text: str) -> tuple[bytes, str]:
+        """Returns (audio_bytes, format) where format is 'mp3'."""
+        import edge_tts
+        communicate = edge_tts.Communicate(text, self.voice)
+        parts = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                parts.append(chunk["data"])
+        return b"".join(parts), "mp3"
+
+    async def close(self):
+        pass
+
+
 class RealtimeSynthesizer:
     def __init__(self, settings):
         self.settings = settings
@@ -232,8 +252,9 @@ class RealtimeSynthesizer:
             logger.error(f"TTS error: {e}")
             raise SpeechServiceError(f"TTS failed: {str(e)}")
 
-    async def synthesize_full(self, text: str) -> bytes:
-        return await self._synthesize(text)
+    async def synthesize_full(self, text: str) -> tuple[bytes, str]:
+        """Returns (audio_bytes, format) where format is 'wav'."""
+        return await self._synthesize(text), "wav"
 
     async def _synthesize(self, text: str) -> bytes:
         voice = await get_piper_voice(self.settings)
@@ -289,7 +310,10 @@ class RealtimeVoicePipeline:
         self.send_event = send_event
         self.mode = mode
         self.transcriber: Optional[RealtimeTranscriber] = None
-        self.synthesizer = RealtimeSynthesizer(self.settings)
+        if self.settings.tts_backend == "edge_tts":
+            self.synthesizer = EdgeTTSSynthesizer(self.settings)
+        else:
+            self.synthesizer = RealtimeSynthesizer(self.settings)
         self.state = StreamState.IDLE
 
     def _emit(self, event_type: str, data: dict = None):
@@ -320,16 +344,19 @@ class RealtimeVoicePipeline:
         if not self.transcriber:
             return
 
+        t_stt = time.monotonic()
         final_text = await self.transcriber.stop()
+        stt_ms = round((time.monotonic() - t_stt) * 1000)
+
         if not final_text:
             logger.info("Audio too short or empty, ignoring.")
             self._set_state(StreamState.IDLE)
             return
 
         self._emit("user_message", {"text": final_text})
-        await self._process_query(final_text)
+        await self._process_query(final_text, stt_ms=stt_ms)
 
-    async def _process_query(self, query: str) -> None:
+    async def _process_query(self, query: str, stt_ms: int = 0) -> None:
         import re as _re
         t0 = time.monotonic()
         self._set_state(StreamState.PROCESSING)
@@ -340,9 +367,12 @@ class RealtimeVoicePipeline:
 
             context = ""
             sources = []
+            rag_ms = 0
             if self.mode == "rag" and self.rag_service:
                 try:
+                    t_rag = time.monotonic()
                     context, source_docs, _ = await self.rag_service.get_context(query)
+                    rag_ms = round((time.monotonic() - t_rag) * 1000)
                     sources = [{"filename": s.filename, "score": s.score} for s in source_docs]
                 except Exception as e:
                     logger.warning(f"RAG skipped: {e}")

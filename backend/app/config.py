@@ -41,11 +41,16 @@ class Settings(BaseSettings):
     whisper_cpu_threads: int = Field(default=16, env="WHISPER_CPU_THREADS")
     speech_language: str = Field(default="tr", env="SPEECH_LANGUAGE")
 
-    # ── TTS — Piper ──────────────────────────────────────────────────────────
+    # ── TTS ──────────────────────────────────────────────────────────────────
+    # piper | edge_tts
+    tts_backend: str = Field(default="edge_tts", env="TTS_BACKEND")
+    # Piper (lokal, ONNX CPU)
     piper_model_path: str = Field(
         default="models/tr_TR-dfki-medium.onnx",
         env="PIPER_MODEL_PATH"
     )
+    # Edge-TTS (Microsoft Neural, online, en iyi Türkçe kalitesi)
+    edge_tts_voice: str = Field(default="tr-TR-EmelNeural", env="EDGE_TTS_VOICE")
 
     # ── Embeddings ───────────────────────────────────────────────────────────
     embedding_model: str = Field(
