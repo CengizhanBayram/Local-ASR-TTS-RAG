@@ -107,7 +107,7 @@ class Settings(BaseSettings):
 
     # ── VAD (sent to frontend on connect) ────────────────────────────────────
     vad_silence_threshold: float = Field(default=0.008, env="VAD_SILENCE_THRESHOLD")
-    vad_silence_duration_ms: int = Field(default=1500, env="VAD_SILENCE_DURATION_MS")
+    vad_silence_duration_ms: int = Field(default=700, env="VAD_SILENCE_DURATION_MS")
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: list[str] = Field(default=["*"], env="CORS_ORIGINS")

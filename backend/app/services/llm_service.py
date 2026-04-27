@@ -70,6 +70,18 @@ You are helpful, honest, and direct.
 - Warm and approachable, but professional
 - Adapt your formality to match how the user is speaking to you"""
 
+    # Compact voice prompts — fewer tokens = lower TTFT, shorter spoken answers
+    VOICE_RAG_PROMPT = """Türkçe sesli asistansın. Kurallara uymak zorundasın:
+- Sadece verilen kaynaklardaki bilgiyi kullan
+- Cevabı en fazla 2-3 kısa cümleyle ver
+- Madde işareti, başlık, markdown kullanma — düz konuşma dili yaz
+- Kaynaklarda yoksa: "Bu konuda bilgim yok." de"""
+
+    VOICE_FREE_PROMPT = """Türkçe sesli asistansın.
+- En fazla 2-3 kısa cümleyle cevap ver
+- Doğal konuşma dili kullan, markdown kullanma
+- Doğrudan cevaba geç"""
+
     # ── Prompt Templates ────────────────────────────────────────────────────
     CONTEXT_TEMPLATE = """{history_section}<sources>
 {context}
@@ -211,10 +223,11 @@ Original question: {query}"""
         self,
         query: str,
         conversation_history: str = "",
+        system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         history = f"<conversation_history>\n{conversation_history}\n</conversation_history>\n\n" if conversation_history else ""
         user_msg = f"{history}User: {query}"
-        async for chunk in self._provider.generate_stream(self.FREE_SYSTEM_PROMPT, user_msg):
+        async for chunk in self._provider.generate_stream(system_prompt or self.FREE_SYSTEM_PROMPT, user_msg):
             yield chunk
 
     # ── Query helpers ────────────────────────────────────────────────────────

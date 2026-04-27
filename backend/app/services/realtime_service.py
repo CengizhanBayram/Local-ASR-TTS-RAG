@@ -363,7 +363,7 @@ class RealtimeVoicePipeline:
         try:
             history_text = ""
             if self.conv_service and self.session_id:
-                history_text = self.conv_service.get_history_as_text(self.session_id, max_turns=5)
+                history_text = self.conv_service.get_history_as_text(self.session_id, max_turns=3)
 
             context = ""
             sources = []
@@ -402,10 +402,16 @@ class RealtimeVoicePipeline:
                 buf = ""
                 order = 0
                 if self.mode == "free":
-                    gen = self.llm_service.generate_free_stream(query, conversation_history=history_text)
+                    gen = self.llm_service.generate_free_stream(
+                        query,
+                        conversation_history=history_text,
+                        system_prompt=self.llm_service.VOICE_FREE_PROMPT,
+                    )
                 else:
                     gen = self.llm_service.generate_response_stream(
-                        query, context, conversation_history=history_text
+                        query, context,
+                        system_prompt=self.llm_service.VOICE_RAG_PROMPT,
+                        conversation_history=history_text,
                     )
                 async for token in gen:
                     full_answer_parts.append(token)
@@ -424,19 +430,47 @@ class RealtimeVoicePipeline:
                 await sentence_q.put(None)  # sentinel
 
             async def consume_sentences():
+                # Fire TTS requests in parallel (up to 3 concurrent) as sentences arrive,
+                # then emit audio in sentence order — eliminates serial TTS latency.
+                sem = asyncio.Semaphore(3)
+                pending: dict[int, tuple] = {}
+                next_emit = [0]
+
+                async def tts_one(ord_: int, sentence: str):
+                    async with sem:
+                        t = time.monotonic()
+                        try:
+                            audio, fmt = await self.synthesizer.synthesize_full(sentence)
+                            tts_ms_total[0] += round((time.monotonic() - t) * 1000)
+                            pending[ord_] = (audio, fmt)
+                        except Exception as e:
+                            logger.error(f"TTS sentence {ord_} error: {e}")
+
+                tasks = []
                 while True:
                     item = await sentence_q.get()
                     if item is None:
-                        await audio_q.put(None)
                         break
-                    order, sentence = item
-                    try:
-                        t_tts = time.monotonic()
-                        audio, fmt = await self.synthesizer.synthesize_full(sentence)
-                        tts_ms_total[0] += round((time.monotonic() - t_tts) * 1000)
-                        await audio_q.put((order, audio, fmt))
-                    except Exception as e:
-                        logger.error(f"TTS sentence error: {e}")
+                    ord_, sentence = item
+                    tasks.append(asyncio.create_task(tts_one(ord_, sentence)))
+
+                # Await completions in arrival order; emit audio in sentence order
+                for coro in asyncio.as_completed(tasks or [asyncio.sleep(0)]):
+                    await coro
+                    while next_emit[0] in pending:
+                        n = next_emit[0]
+                        audio, fmt = pending.pop(n)
+                        await audio_q.put((n, audio, fmt))
+                        next_emit[0] += 1
+
+                # Flush any out-of-order stragglers
+                while next_emit[0] in pending:
+                    n = next_emit[0]
+                    audio, fmt = pending.pop(n)
+                    await audio_q.put((n, audio, fmt))
+                    next_emit[0] += 1
+
+                await audio_q.put(None)
 
             async def emit_audio():
                 """Send each complete sentence audio immediately — no waiting for all TTS."""
