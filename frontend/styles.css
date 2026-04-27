@@ -1128,6 +1128,17 @@ body::before {
     border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
+/* Response time badge */
+.response-time-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+    opacity: 0.8;
+    margin-bottom: 6px;
+    letter-spacing: 0.03em;
+}
+
 /* ============================================
    Pipeline Metrics Panel
    ============================================ */
