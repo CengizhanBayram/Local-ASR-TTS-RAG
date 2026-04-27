@@ -23,7 +23,7 @@ class GeminiProvider(BaseLLMProvider):
         self._model = genai.GenerativeModel(settings.gemini_model)
         self._gen_config = genai.types.GenerationConfig(
             temperature=0.7,
-            max_output_tokens=1000,
+            max_output_tokens=512,
         )
         logger.info(f"Gemini provider: {settings.gemini_model}")
 

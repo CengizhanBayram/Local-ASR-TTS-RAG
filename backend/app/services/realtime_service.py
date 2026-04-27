@@ -395,6 +395,7 @@ class RealtimeVoicePipeline:
             pcm_parts:         list = []
             wav_params:        list = [None]   # [tuple | None], mutated by emit_audio
             tts_ms_total:      list = [0]      # cumulative TTS synthesis time
+            llm_ms_only:       list = [0]      # pure LLM generation time (no TTS)
             t_llm_start = time.monotonic()
 
             async def produce_sentences():
@@ -419,6 +420,7 @@ class RealtimeVoicePipeline:
                 if buf.strip():
                     await sentence_q.put((order, buf.strip()))
                     order += 1
+                llm_ms_only[0] = round((time.monotonic() - t_llm_start) * 1000)
                 await sentence_q.put(None)  # sentinel
 
             async def consume_sentences():
@@ -473,7 +475,7 @@ class RealtimeVoicePipeline:
                 self._emit("error", {"message": "Yanıt süresi aşıldı, lütfen tekrar deneyin."})
                 return
 
-            llm_ms = round((time.monotonic() - t_llm_start) * 1000)
+            llm_ms = llm_ms_only[0]
 
             # Finalize text response
             full_answer = "".join(full_answer_parts)
