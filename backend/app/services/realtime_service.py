@@ -9,6 +9,7 @@ import json
 import logging
 import base64
 import struct
+import time
 import wave
 from typing import Optional, Callable, List
 from dataclasses import dataclass, field
@@ -26,10 +27,10 @@ _piper_voice = None
 _model_lock = asyncio.Lock()
 
 
-def _load_whisper_sync(model_size: str, device: str, compute_type: str):
+def _load_whisper_sync(model_size: str, device: str, compute_type: str, cpu_threads: int = 16):
     from faster_whisper import WhisperModel
-    logger.info(f"Loading Faster Whisper: {model_size} ({device}/{compute_type})")
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    logger.info(f"Loading Faster Whisper: {model_size} ({device}/{compute_type}) cpu_threads={cpu_threads}")
+    return WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=cpu_threads)
 
 
 def _load_piper_sync(model_path: str):
@@ -64,6 +65,7 @@ async def get_whisper_model(settings):
                     settings.whisper_model_size,
                     settings.whisper_device,
                     settings.whisper_compute_type,
+                    settings.whisper_cpu_threads,
                 )
     return _whisper_model
 
@@ -329,6 +331,7 @@ class RealtimeVoicePipeline:
 
     async def _process_query(self, query: str) -> None:
         import re as _re
+        t0 = time.monotonic()
         self._set_state(StreamState.PROCESSING)
         try:
             history_text = ""
@@ -354,6 +357,7 @@ class RealtimeVoicePipeline:
             sentence_q: asyncio.Queue = asyncio.Queue()
             audio_q:    asyncio.Queue = asyncio.Queue()  # (order, bytes)
             full_answer_parts = []
+            t_llm_start = time.monotonic()
 
             async def produce_sentences():
                 buf = ""
@@ -395,13 +399,16 @@ class RealtimeVoicePipeline:
             # Run producer & consumer concurrently
             await asyncio.gather(produce_sentences(), consume_sentences())
 
+            llm_ms = round((time.monotonic() - t_llm_start) * 1000)
+
             # Drain audio queue in order and emit
             full_answer = "".join(full_answer_parts)
             if self.conv_service and self.session_id:
                 self.conv_service.add_user_message(self.session_id, query)
                 self.conv_service.add_assistant_message(self.session_id, full_answer)
 
-            self._emit("answer", {"text": full_answer, "sources": sources})
+            total_ms = round((time.monotonic() - t0) * 1000)
+            self._emit("answer", {"text": full_answer, "sources": sources, "total_ms": total_ms, "llm_ms": llm_ms})
 
             audio_chunks_all = []
             while True:

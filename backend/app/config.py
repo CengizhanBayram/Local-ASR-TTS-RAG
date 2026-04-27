@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     whisper_device: str = Field(default="cpu", env="WHISPER_DEVICE")
     # int8 (CPU) | float16 (GPU) | float32
     whisper_compute_type: str = Field(default="int8", env="WHISPER_COMPUTE_TYPE")
+    # CTranslate2 thread count; 0=auto (all cores). On 128-core EPYC, 16 avoids contention.
+    whisper_cpu_threads: int = Field(default=16, env="WHISPER_CPU_THREADS")
     speech_language: str = Field(default="tr", env="SPEECH_LANGUAGE")
 
     # ── TTS — Piper ──────────────────────────────────────────────────────────

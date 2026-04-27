@@ -36,6 +36,8 @@ const state = {
     currentAssistantMsgId: null,
     // SSE
     sseStreamId: null,
+    // Timing
+    queryStartTime: null,
 };
 
 // ============================================================
@@ -271,6 +273,7 @@ const VoiceManager = {
         this.isRecording = false;
         this._silenceStart = null;
         this._hadSpeech = false;
+        state.queryStartTime = Date.now();
         elements.voiceBtn.classList.remove('recording');
         updateStatus('processing', 'Processing...');
         handleStateChange('processing');
@@ -500,6 +503,7 @@ async function sendTextMessage() {
     const text = elements.textInput.value.trim();
     if (!text) return;
     elements.textInput.value = '';
+    state.queryStartTime = Date.now();
 
     addMessage('user', text);
     const streamMsgId = addStreamingMessage();

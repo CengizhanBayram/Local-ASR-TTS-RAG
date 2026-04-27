@@ -4,6 +4,7 @@ FastAPI Entry Point
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 from pathlib import Path
@@ -79,6 +80,18 @@ async def lifespan(app: FastAPI):
     logger.info(f"  whisper={settings.whisper_model_size} device={settings.whisper_device}/{settings.whisper_compute_type}")
     logger.info(f"  embedding_device={settings.embedding_device}  debug={settings.debug}")
     logger.info("=" * 60)
+
+    # Expand the default thread pool so CPU-bound executor tasks don't queue behind each other
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=32))
+
+    # Cap PyTorch intra-op threads for sentence-transformers / reranker (avoid NUMA contention)
+    try:
+        import torch
+        torch.set_num_threads(16)
+        torch.set_num_interop_threads(8)
+    except Exception:
+        pass
 
     t_start = time.monotonic()
     try:
@@ -188,5 +201,8 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.debug
+        reload=settings.debug,
+        workers=1 if settings.debug else 4,
+        loop="uvloop",
+        http="httptools",
     )
