@@ -396,8 +396,16 @@ class RealtimeVoicePipeline:
                     except Exception as e:
                         logger.error(f"TTS sentence error: {e}")
 
-            # Run producer & consumer concurrently
-            await asyncio.gather(produce_sentences(), consume_sentences())
+            # Run producer & consumer concurrently (90s timeout prevents infinite hangs)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(produce_sentences(), consume_sentences()),
+                    timeout=90.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("LLM/TTS pipeline timed out after 90s")
+                self._emit("error", {"message": "Yanıt süresi aşıldı, lütfen tekrar deneyin."})
+                return
 
             llm_ms = round((time.monotonic() - t_llm_start) * 1000)
 
@@ -410,19 +418,28 @@ class RealtimeVoicePipeline:
             total_ms = round((time.monotonic() - t0) * 1000)
             self._emit("answer", {"text": full_answer, "sources": sources, "total_ms": total_ms, "llm_ms": llm_ms})
 
-            audio_chunks_all = []
+            # Drain audio queue and send each complete sentence WAV as one chunk.
+            # Do NOT split WAVs into sub-chunks — a partial WAV cannot be decoded by the browser.
+            pcm_parts = []
+            wav_params = None  # (sample_rate, channels, sampwidth) from first sentence
             while True:
                 item = await audio_q.get()
                 if item is None:
                     break
                 _, audio_data = item
-                audio_chunks_all.append(audio_data)
-                for i in range(0, len(audio_data), 8192):
-                    b64 = base64.b64encode(audio_data[i:i + 8192]).decode()
-                    self._emit("audio_chunk", {"data": b64, "format": "wav"})
+                try:
+                    pcm, sr, ch, sw = self._wav_info(audio_data)
+                    pcm_parts.append(pcm)
+                    if wav_params is None:
+                        wav_params = (sr, ch, sw)
+                except Exception:
+                    pcm_parts.append(audio_data)
+                b64 = base64.b64encode(audio_data).decode()
+                self._emit("audio_chunk", {"data": b64, "format": "wav"})
 
-            if audio_chunks_all:
-                full_b64 = base64.b64encode(b''.join(audio_chunks_all)).decode()
+            if pcm_parts and wav_params:
+                combined_wav = self._build_wav(b"".join(pcm_parts), *wav_params)
+                full_b64 = base64.b64encode(combined_wav).decode()
                 self._emit("audio_complete", {"full_audio": full_b64})
 
         except Exception as e:
@@ -430,6 +447,25 @@ class RealtimeVoicePipeline:
             self._emit("error", {"message": str(e)})
         finally:
             self._set_state(StreamState.IDLE)
+
+    @staticmethod
+    def _wav_info(wav_bytes: bytes):
+        """Return (pcm_bytes, sample_rate, channels, sampwidth) from a WAV."""
+        import io, wave
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            return wf.readframes(wf.getnframes()), wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
+
+    @staticmethod
+    def _build_wav(pcm: bytes, sample_rate: int, channels: int, sampwidth: int) -> bytes:
+        """Wrap raw PCM bytes in a proper WAV container."""
+        import io, wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm)
+        return buf.getvalue()
 
     async def cancel(self) -> None:
         if self.transcriber and self.transcriber.is_running:

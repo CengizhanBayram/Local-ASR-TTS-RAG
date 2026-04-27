@@ -36,8 +36,9 @@ const state = {
     currentAssistantMsgId: null,
     // SSE
     sseStreamId: null,
-    // Timing
+    // Timing & safety
     queryStartTime: null,
+    processingTimeout: null,
 };
 
 // ============================================================
@@ -221,6 +222,7 @@ function sendWsMessage(type, data = {}) {
 // ============================================================
 function handleStateChange(newState) {
     state.currentState = newState;
+    if (newState === 'idle') { clearTimeout(state.processingTimeout); state.processingTimeout = null; }
     const cfg = {
         idle:       { text: 'Click mic to speak 🎙️', cls: '' },
         listening:  { text: 'Listening... click again to stop 🎤', cls: 'listening' },
@@ -274,6 +276,14 @@ const VoiceManager = {
         this._silenceStart = null;
         this._hadSpeech = false;
         state.queryStartTime = Date.now();
+        clearTimeout(state.processingTimeout);
+        state.processingTimeout = setTimeout(() => {
+            if (state.currentState !== 'idle') {
+                showToast('error', 'Zaman Aşımı', 'Sunucu yanıt vermedi, lütfen tekrar deneyin.');
+                handleStateChange('idle');
+                if (state.currentAssistantMsgId) { removeMessage(state.currentAssistantMsgId); state.currentAssistantMsgId = null; }
+            }
+        }, 45000);
         elements.voiceBtn.classList.remove('recording');
         updateStatus('processing', 'Processing...');
         handleStateChange('processing');
@@ -508,6 +518,11 @@ async function sendTextMessage() {
     if (!text) return;
     elements.textInput.value = '';
     state.queryStartTime = Date.now();
+    clearTimeout(state.processingTimeout);
+    state.processingTimeout = setTimeout(() => {
+        showToast('error', 'Zaman Aşımı', 'Sunucu yanıt vermedi.');
+        state.queryStartTime = null;
+    }, 60000);
 
     addMessage('user', text);
     const streamMsgId = addStreamingMessage();
@@ -560,6 +575,7 @@ async function sendTextMessage() {
                     if (evt.turn)       updateTurnCount(evt.turn);
                     metrics = evt.metrics;
                     state.queryStartTime = null;
+                    clearTimeout(state.processingTimeout); state.processingTimeout = null;
                     // Finalize the streaming message with full content
                     const msgEl = document.getElementById(streamMsgId);
                     const fullText = msgEl?.querySelector('.stream-text')?.textContent || '';

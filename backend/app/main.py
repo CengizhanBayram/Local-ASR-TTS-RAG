@@ -27,6 +27,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _warmup_whisper(settings) -> None:
+    """Run a 0.5s silent WAV through Whisper to trigger CUDA JIT compilation."""
+    import io, struct, wave
+    from .services.realtime_service import get_whisper_model
+
+    sample_rate = 16000
+    n_samples = sample_rate // 2  # 0.5s of silence
+    pcm = bytes(n_samples * 2)   # int16 zeros
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    wav_bytes = buf.getvalue()
+
+    model = await get_whisper_model(settings)
+
+    def _run():
+        segs, _ = model.transcribe(io.BytesIO(wav_bytes), language=settings.speech_language)
+        list(segs)  # exhaust generator
+
+    loop = asyncio.get_event_loop()
+    t = time.monotonic()
+    await loop.run_in_executor(None, _run)
+    logger.info(f"Whisper CUDA warm-up done in {time.monotonic()-t:.1f}s")
+
+
 async def _preload_models(settings) -> None:
     from .services.realtime_service import get_whisper_model, get_piper_voice
     from .api.dependencies import get_rag_service, get_llm_service, get_reranker_service, get_conversation_service
@@ -96,9 +125,17 @@ async def lifespan(app: FastAPI):
     t_start = time.monotonic()
     try:
         await _preload_models(settings)
-        logger.info(f"All models loaded in {time.monotonic()-t_start:.1f}s — ready to serve")
+        logger.info(f"All models loaded in {time.monotonic()-t_start:.1f}s")
     except Exception as exc:
         logger.warning(f"Model preload partial failure: {exc}  (will retry on first request)")
+
+    # Warm-up: run a silent dummy inference to trigger CUDA kernel JIT compilation.
+    # Without this, the first real Whisper call on CUDA takes 10-30s → "stuck" bug.
+    try:
+        await _warmup_whisper(settings)
+        logger.info(f"Startup complete in {time.monotonic()-t_start:.1f}s — ready to serve ✓")
+    except Exception as exc:
+        logger.warning(f"Whisper warm-up skipped: {exc}")
 
     yield
 
