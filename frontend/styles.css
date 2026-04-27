@@ -267,7 +267,18 @@ body::before {
 
 .view-header {
     padding: 28px 40px 20px;
-    border-bottom: 1px solid var(--glass-border);
+    border-bottom: 1px solid transparent;
+    background:
+        linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
+        linear-gradient(90deg, rgba(99,102,241,0.4) 0%, rgba(192,38,211,0.4) 50%, rgba(99,102,241,0.2) 100%) border-box;
+    border-bottom: 1px solid transparent;
+    position: relative;
+}
+.view-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(124,127,255,0.5) 30%, rgba(192,38,211,0.5) 70%, transparent 100%);
 }
 
 .view-header-top {
@@ -715,8 +726,8 @@ body::before {
 #text-input {
     flex: 1;
     padding: 14px 20px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--glass-border);
+    background: rgba(20, 20, 36, 0.8);
+    border: 1px solid rgba(124, 127, 255, 0.2);
     border-radius: var(--radius-lg);
     color: var(--text-primary);
     font-size: 1rem;
@@ -727,7 +738,8 @@ body::before {
 #text-input:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    box-shadow: 0 0 0 3px rgba(124, 127, 255, 0.15), 0 0 20px rgba(99, 102, 241, 0.1);
+    background: rgba(26, 26, 46, 0.9);
 }
 
 #text-input::placeholder {
