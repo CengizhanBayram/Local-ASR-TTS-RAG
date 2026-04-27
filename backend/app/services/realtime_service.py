@@ -485,15 +485,29 @@ class RealtimeVoicePipeline:
             self._emit("answer", {
                 "text": full_answer,
                 "sources": sources,
-                "total_ms": total_ms,
-                "llm_ms": llm_ms,
+                "metrics": {
+                    "stt_ms":      stt_ms,
+                    "rag_ms":      rag_ms,
+                    "llm_ms":      llm_ms,
+                    "tts_ms":      tts_ms_total[0],
+                    "total_ms":    total_ms,
+                    "docs_retrieved":      len(sources),
+                    "docs_after_threshold": len(sources),
+                },
             })
 
-            # Send combined WAV for the replay button (all sentences merged into one valid WAV)
-            if pcm_parts and wav_params[0]:
-                combined_wav = self._build_wav(b"".join(pcm_parts), *wav_params[0])
+            # Send combined audio for the replay button
+            if pcm_parts:
+                is_wav = wav_params[0] is not None
+                if is_wav:
+                    combined = self._build_wav(b"".join(pcm_parts), *wav_params[0])
+                    replay_fmt = "wav"
+                else:
+                    combined = b"".join(pcm_parts)  # concatenated MP3
+                    replay_fmt = "mp3"
                 self._emit("audio_complete", {
-                    "full_audio": base64.b64encode(combined_wav).decode(),
+                    "full_audio": base64.b64encode(combined).decode(),
+                    "format": replay_fmt,
                 })
 
         except Exception as e:
