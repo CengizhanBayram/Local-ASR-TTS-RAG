@@ -257,14 +257,21 @@ body::before {
 }
 
 .view-header {
-    padding: 32px 40px 24px;
+    padding: 28px 40px 20px;
     border-bottom: 1px solid var(--glass-border);
+}
+
+.view-header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
 }
 
 .view-header h1 {
     font-size: 1.75rem;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     background: var(--accent-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -273,7 +280,49 @@ body::before {
 
 .view-header p {
     color: var(--text-secondary);
-    font-size: 0.95rem;
+    font-size: 0.9rem;
+}
+
+/* ── Mode Toggle ───────────────────────────────────────────── */
+.mode-toggle {
+    display: flex;
+    gap: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-full);
+    padding: 4px;
+    flex-shrink: 0;
+}
+
+.mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 18px;
+    border: none;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.mode-btn i {
+    font-size: 0.8rem;
+}
+
+.mode-btn:hover {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.mode-btn.active {
+    background: var(--accent-gradient);
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(99, 102, 241, 0.4);
 }
 
 /* ============================================

@@ -62,8 +62,22 @@
             <!-- Chat View -->
             <div class="view active" id="chat-view">
                 <header class="view-header">
-                    <h1>Sesli Asistan</h1>
-                    <p>Belgelerinize sesli sorular sorun, sesli cevaplar alın</p>
+                    <div class="view-header-top">
+                        <div>
+                            <h1>Sesli Asistan</h1>
+                            <p id="mode-desc">Belgelerinize sesli sorular sorun, sesli cevaplar alın</p>
+                        </div>
+                        <div class="mode-toggle">
+                            <button class="mode-btn active" id="mode-rag">
+                                <i class="fas fa-book-open"></i>
+                                <span>Belge RAG</span>
+                            </button>
+                            <button class="mode-btn" id="mode-free">
+                                <i class="fas fa-comments"></i>
+                                <span>Serbest Sohbet</span>
+                            </button>
+                        </div>
+                    </div>
                 </header>
                 
                 <div class="chat-container">
