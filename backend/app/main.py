@@ -66,9 +66,12 @@ async def _preload_models(settings) -> None:
         logger.info(f"Whisper ready in {time.monotonic()-t:.1f}s")
 
     async def _load_piper():
-        t = time.monotonic()
-        await get_piper_voice(settings)
-        logger.info(f"Piper TTS ready in {time.monotonic()-t:.1f}s")
+        if settings.tts_backend != "edge_tts":
+            t = time.monotonic()
+            await get_piper_voice(settings)
+            logger.info(f"Piper TTS ready in {time.monotonic()-t:.1f}s")
+        else:
+            logger.info("TTS backend=edge_tts, skipping Piper model load")
 
     def _load_rag():
         t = time.monotonic()
