@@ -3,7 +3,7 @@ Configuration management using Pydantic Settings
 """
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing import Optional
 from functools import lru_cache
 
@@ -109,8 +109,23 @@ class Settings(BaseSettings):
     vad_silence_threshold: float = Field(default=0.008, env="VAD_SILENCE_THRESHOLD")
     vad_silence_duration_ms: int = Field(default=700, env="VAD_SILENCE_DURATION_MS")
 
+    # ── Gemini generation ─────────────────────────────────────────────────────
+    gemini_max_output_tokens: int = Field(default=1024, env="GEMINI_MAX_OUTPUT_TOKENS")
+
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: list[str] = Field(default=["*"], env="CORS_ORIGINS")
+
+    @model_validator(mode="after")
+    def validate_chunk_settings(self) -> "Settings":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError(
+                f"CHUNK_OVERLAP ({self.chunk_overlap}) must be less than CHUNK_SIZE ({self.chunk_size})"
+            )
+        if self.child_chunk_size >= self.parent_chunk_size:
+            raise ValueError(
+                f"CHILD_CHUNK_SIZE ({self.child_chunk_size}) must be less than PARENT_CHUNK_SIZE ({self.parent_chunk_size})"
+            )
+        return self
 
     class Config:
         env_file = ".env"

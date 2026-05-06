@@ -125,12 +125,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Fail fast: validate required API keys before starting
+    if settings.llm_provider == "gemini" and not settings.gemini_api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY ortam değişkeni tanımlı değil! "
+            "LLM_PROVIDER=gemini kullanılıyorsa bu key zorunludur."
+        )
+
     t_start = time.monotonic()
     try:
         await _preload_models(settings)
         logger.info(f"All models loaded in {time.monotonic()-t_start:.1f}s")
     except Exception as exc:
-        logger.warning(f"Model preload partial failure: {exc}  (will retry on first request)")
+        logger.error(f"Model preload failed: {exc}")
+        raise RuntimeError(f"Kritik model yüklenemedi, uygulama başlatılamıyor: {exc}") from exc
 
     # Warm-up: run a silent dummy inference to trigger CUDA kernel JIT compilation.
     # Without this, the first real Whisper call on CUDA takes 10-30s → "stuck" bug.
@@ -138,7 +146,7 @@ async def lifespan(app: FastAPI):
         await _warmup_whisper(settings)
         logger.info(f"Startup complete in {time.monotonic()-t_start:.1f}s — ready to serve ✓")
     except Exception as exc:
-        logger.warning(f"Whisper warm-up skipped: {exc}")
+        logger.warning(f"Whisper warm-up skipped ({type(exc).__name__}): {exc}")
 
     async def _session_cleanup_loop():
         from .api.dependencies import get_conversation_service
@@ -156,6 +164,10 @@ async def lifespan(app: FastAPI):
     yield
 
     cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Application shutting down.")
 
 

@@ -245,7 +245,7 @@ class RAGService:
             seen_contents: set = set()
             deduped: List[SourceDocument] = []
             for d in all_docs:
-                key = d.content[:200]
+                key = d.content[:500]
                 if key not in seen_contents:
                     seen_contents.add(key)
                     deduped.append(d)

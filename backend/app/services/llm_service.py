@@ -260,7 +260,7 @@ Original question: {query}"""
             variations = lines[:n]
             if query not in variations:
                 variations.insert(0, query)
-            return variations[: n + 1]
+            return variations[:n]
         except Exception as e:
             logger.warning(f"Multi-query generation failed: {e}")
             return [query]

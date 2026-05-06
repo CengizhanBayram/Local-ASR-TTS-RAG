@@ -15,8 +15,6 @@ import wave
 from typing import Optional, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import deque
-
 from ..config import get_settings
 from ..models.exceptions import SpeechServiceError
 
@@ -102,12 +100,20 @@ class RealtimeEvent:
 
 
 class AudioBuffer:
-    def __init__(self, max_size: int = 1024 * 1024):
-        self.buffer = deque(maxlen=max_size)
+    # 10MB hard cap — 10MB @ 16kHz/16-bit mono ≈ 312 seconds of audio
+    MAX_SIZE = 10 * 1024 * 1024
+
+    def __init__(self):
+        self.buffer = bytearray()
         self.lock = asyncio.Lock()
 
     async def write(self, data: bytes) -> None:
         async with self.lock:
+            if len(self.buffer) + len(data) > self.MAX_SIZE:
+                logger.warning(
+                    f"AudioBuffer at capacity ({len(self.buffer)} bytes), dropping {len(data)} bytes"
+                )
+                return
             self.buffer.extend(data)
 
     async def read_all(self) -> bytes:
@@ -131,7 +137,7 @@ class RealtimeTranscriber:
         self.final_text = ""
 
     def start(self) -> None:
-        self.audio_buffer = AudioBuffer()
+        self.audio_buffer = AudioBuffer()  # fresh buffer each session
         self.is_running = True
         self.final_text = ""
         logger.info("Realtime transcription started")

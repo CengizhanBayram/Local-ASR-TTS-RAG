@@ -23,7 +23,7 @@ class GeminiProvider(BaseLLMProvider):
         self._model = genai.GenerativeModel(settings.gemini_model)
         self._gen_config = genai.types.GenerationConfig(
             temperature=0.7,
-            max_output_tokens=512,
+            max_output_tokens=settings.gemini_max_output_tokens,
         )
         logger.info(f"Gemini provider: {settings.gemini_model}")
 
@@ -66,7 +66,10 @@ class GeminiProvider(BaseLLMProvider):
         threading.Thread(target=_stream, daemon=True).start()
 
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=60.0)
+            except asyncio.TimeoutError:
+                raise LookupError("Gemini stream timed out — no response from model after 60s")
             if item is None:
                 break
             if isinstance(item, Exception):

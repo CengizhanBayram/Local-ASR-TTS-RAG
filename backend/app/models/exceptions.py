@@ -13,7 +13,7 @@ class VoiceAIException(Exception):
 
 
 class SpeechServiceError(VoiceAIException):
-    """Azure Speech Service hataları"""
+    """Faster Whisper STT / Piper TTS hataları"""
     def __init__(self, message: str):
         super().__init__(f"Speech Service Error: {message}", status_code=503)
 

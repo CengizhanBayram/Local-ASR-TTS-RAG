@@ -7,7 +7,7 @@ import io
 import wave
 import struct
 import base64
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 class AudioProcessor:
@@ -18,7 +18,7 @@ class AudioProcessor:
     # Desteklenen formatlar
     SUPPORTED_FORMATS = {'wav', 'webm', 'mp3', 'ogg'}
     
-    # Azure Speech Service için gerekli format
+    # Whisper STT için gerekli format
     TARGET_SAMPLE_RATE = 16000
     TARGET_CHANNELS = 1
     TARGET_BITS_PER_SAMPLE = 16
