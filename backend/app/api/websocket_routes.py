@@ -135,7 +135,10 @@ async def realtime_voice_websocket(websocket: WebSocket, client_id: str):
                 if pipeline:
                     audio_b64 = message.get("data", "")
                     if audio_b64:
-                        pipeline.push_audio(base64.b64decode(audio_b64))
+                        try:
+                            pipeline.push_audio(base64.b64decode(audio_b64))
+                        except Exception:
+                            logger.warning(f"Invalid audio base64 from {client_id}, skipping")
 
             elif msg_type == "stop":
                 pipeline = manager.get_pipeline(client_id)

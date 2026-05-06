@@ -140,8 +140,22 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Whisper warm-up skipped: {exc}")
 
+    async def _session_cleanup_loop():
+        from .api.dependencies import get_conversation_service
+        while True:
+            await asyncio.sleep(300)  # her 5 dakikada bir
+            try:
+                n = get_conversation_service().cleanup_expired()
+                if n:
+                    logger.info(f"Session cleanup: {n} expired sessions removed")
+            except Exception as e:
+                logger.warning(f"Session cleanup error: {e}")
+
+    cleanup_task = asyncio.create_task(_session_cleanup_loop())
+
     yield
 
+    cleanup_task.cancel()
     logger.info("Application shutting down.")
 
 

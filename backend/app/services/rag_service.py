@@ -120,8 +120,13 @@ class RAGService:
         if not chunks:
             return 0
         try:
-            texts      = [c.content for c in chunks]
-            embeddings = self._embedding_model.encode(texts, show_progress_bar=False).tolist()
+            import asyncio as _asyncio
+            texts = [c.content for c in chunks]
+            loop  = _asyncio.get_running_loop()
+            embeddings = await loop.run_in_executor(
+                None,
+                lambda: self._embedding_model.encode(texts, show_progress_bar=False).tolist(),
+            )
             ids        = [f"{c.document_id}_{c.chunk_index}" for c in chunks]
             metadatas  = [
                 {
@@ -170,7 +175,12 @@ class RAGService:
 
         try:
             # ── Vector search ─────────────────────────────────────────────────
-            query_embeddings = self._embedding_model.encode(all_queries, show_progress_bar=False).tolist()
+            import asyncio as _asyncio
+            loop = _asyncio.get_running_loop()
+            query_embeddings = await loop.run_in_executor(
+                None,
+                lambda: self._embedding_model.encode(all_queries, show_progress_bar=False).tolist(),
+            )
             n_results = min(top_k * 2, self._collection.count())
 
             # RRF accumulator: id → accumulated score

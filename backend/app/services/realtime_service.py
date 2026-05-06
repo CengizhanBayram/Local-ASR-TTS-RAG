@@ -7,6 +7,7 @@ import asyncio
 import io
 import json
 import logging
+import re as _re
 import base64
 import struct
 import time
@@ -58,7 +59,7 @@ async def get_whisper_model(settings):
     if _whisper_model is None:
         async with _model_lock:
             if _whisper_model is None:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 _whisper_model = await loop.run_in_executor(
                     None,
                     _load_whisper_sync,
@@ -75,7 +76,7 @@ async def get_piper_voice(settings):
     if _piper_voice is None:
         async with _model_lock:
             if _piper_voice is None:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 _piper_voice = await loop.run_in_executor(
                     None, _load_piper_sync, settings.piper_model_path
                 )
@@ -172,7 +173,7 @@ class RealtimeTranscriber:
             segments, _ = model.transcribe(audio_io, language=self.settings.speech_language)
             return "".join(s.text for s in segments).strip()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _run)
 
     def _create_wav(self, pcm_data: bytes) -> bytes:
@@ -202,12 +203,13 @@ class EdgeTTSSynthesizer:
     """Microsoft Edge TTS — en iyi Türkçe kalitesi, streaming MP3."""
 
     def __init__(self, settings):
+        import edge_tts as _edge_tts
+        self._edge_tts = _edge_tts
         self.voice = settings.edge_tts_voice
 
     async def synthesize_full(self, text: str) -> tuple[bytes, str]:
         """Returns (audio_bytes, format) where format is 'mp3'."""
-        import edge_tts
-        communicate = edge_tts.Communicate(text, self.voice)
+        communicate = self._edge_tts.Communicate(text, self.voice)
         parts = []
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -265,7 +267,7 @@ class RealtimeSynthesizer:
                 voice.synthesize_wav(text, wf)
             return wav_io.getvalue()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _run)
 
     def _split_sentences(self, text: str) -> list:
@@ -357,7 +359,6 @@ class RealtimeVoicePipeline:
         await self._process_query(final_text, stt_ms=stt_ms)
 
     async def _process_query(self, query: str, stt_ms: int = 0) -> None:
-        import re as _re
         t0 = time.monotonic()
         self._set_state(StreamState.PROCESSING)
         try:
@@ -430,11 +431,13 @@ class RealtimeVoicePipeline:
                 await sentence_q.put(None)  # sentinel
 
             async def consume_sentences():
-                # Fire TTS requests in parallel (up to 3 concurrent) as sentences arrive,
-                # then emit audio in sentence order — eliminates serial TTS latency.
+                # Fire TTS requests in parallel (up to 3 concurrent) as sentences arrive.
+                # Each task emits to audio_q immediately when ITS turn comes — no waiting
+                # for the full LLM response before the first audio chunk is sent.
                 sem = asyncio.Semaphore(3)
                 pending: dict[int, tuple] = {}
                 next_emit = [0]
+                order_lock = asyncio.Lock()
 
                 async def tts_one(ord_: int, sentence: str):
                     async with sem:
@@ -442,9 +445,17 @@ class RealtimeVoicePipeline:
                         try:
                             audio, fmt = await self.synthesizer.synthesize_full(sentence)
                             tts_ms_total[0] += round((time.monotonic() - t) * 1000)
-                            pending[ord_] = (audio, fmt)
                         except Exception as e:
                             logger.error(f"TTS sentence {ord_} error: {e}")
+                            return
+                    # Emit in-order as soon as this or earlier sentences are ready
+                    async with order_lock:
+                        pending[ord_] = (audio, fmt)
+                        while next_emit[0] in pending:
+                            n = next_emit[0]
+                            a, f = pending.pop(n)
+                            await audio_q.put((n, a, f))
+                            next_emit[0] += 1
 
                 tasks = []
                 while True:
@@ -454,21 +465,8 @@ class RealtimeVoicePipeline:
                     ord_, sentence = item
                     tasks.append(asyncio.create_task(tts_one(ord_, sentence)))
 
-                # Await completions in arrival order; emit audio in sentence order
-                for coro in asyncio.as_completed(tasks or [asyncio.sleep(0)]):
-                    await coro
-                    while next_emit[0] in pending:
-                        n = next_emit[0]
-                        audio, fmt = pending.pop(n)
-                        await audio_q.put((n, audio, fmt))
-                        next_emit[0] += 1
-
-                # Flush any out-of-order stragglers
-                while next_emit[0] in pending:
-                    n = next_emit[0]
-                    audio, fmt = pending.pop(n)
-                    await audio_q.put((n, audio, fmt))
-                    next_emit[0] += 1
+                if tasks:
+                    await asyncio.gather(*tasks)
 
                 await audio_q.put(None)
 
