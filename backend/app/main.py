@@ -10,15 +10,75 @@ import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import collections
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import get_settings
 from .api.routes import router
 from .api.websocket_routes import router as ws_router
 from .models.exceptions import VoiceAIException
+
+
+# ── Rate Limit Middleware ─────────────────────────────────────────────────────
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Sliding-window per-IP rate limiter (no external dependency).
+    Limits are defined per exact path below.
+    """
+
+    LIMITS: dict[str, int] = {
+        "/api/voice/query":      10,
+        "/api/text/query":       20,
+        "/api/chat/query":       20,
+        "/api/chat/stream":      20,
+        "/api/rag/query":        30,
+        "/api/tts":              30,
+        "/api/documents/upload": 10,
+    }
+
+    def __init__(self, app, enabled: bool = True):
+        super().__init__(app)
+        self._enabled = enabled
+        # (ip, path) → deque of monotonic timestamps
+        self._windows: dict = collections.defaultdict(collections.deque)
+
+    async def dispatch(self, request: Request, call_next):
+        if not self._enabled:
+            return await call_next(request)
+
+        path = request.url.path
+        limit = self.LIMITS.get(path)
+
+        if limit is not None:
+            ip = request.client.host if request.client else "unknown"
+            key = (ip, path)
+            window = self._windows[key]
+            now = time.monotonic()
+            cutoff = now - 60.0
+
+            while window and window[0] < cutoff:
+                window.popleft()
+
+            if len(window) >= limit:
+                retry_after = int(60 - (now - window[0]))
+                return Response(
+                    content=(
+                        f'{{"detail":"Rate limit: {limit} req/min for {path}. '
+                        f'Retry-After: {retry_after}s"}}'
+                    ),
+                    status_code=429,
+                    media_type="application/json",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            window.append(now)
+
+        return await call_next(request)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -201,6 +261,9 @@ Azure servisleri ile gerçek zamanlı sesli soru-cevap sistemi.
         lifespan=lifespan
     )
     
+    # Rate Limit Middleware (before CORS so CORS headers still reach the client)
+    app.add_middleware(RateLimitMiddleware, enabled=settings.rate_limit_enabled)
+
     # CORS Middleware
     app.add_middleware(
         CORSMiddleware,
@@ -224,6 +287,21 @@ Azure servisleri ile gerçek zamanlı sesli soru-cevap sistemi.
     # Include routers
     app.include_router(router, prefix="/api")
     app.include_router(ws_router, prefix="/api")
+
+    # Prometheus metrics endpoint
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics():
+        try:
+            from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+            return Response(
+                content=generate_latest(),
+                media_type=CONTENT_TYPE_LATEST,
+            )
+        except ImportError:
+            return JSONResponse(
+                status_code=501,
+                content={"detail": "prometheus_client not installed. Run: pip install prometheus-client"},
+            )
     
     # Serve frontend static files
     frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"

@@ -40,6 +40,8 @@ from ..services.rag_service import RAGService
 from ..services.llm_service import LLMService
 from ..services.reranker_service import RerankerService
 from ..services.conversation_service import ConversationService
+from ..services.cache_service import SemanticCacheService
+from ..utils.metrics import record_pipeline_metrics
 from .dependencies import (
     get_speech_service,
     get_document_service,
@@ -47,6 +49,7 @@ from .dependencies import (
     get_llm_service,
     get_reranker_service,
     get_conversation_service,
+    get_cache_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,21 +66,41 @@ async def health_check(
     llm_service:      LLMService      = Depends(get_llm_service),
     reranker_service: RerankerService = Depends(get_reranker_service),
     conv_service:     ConversationService = Depends(get_conversation_service),
+    cache_service:    SemanticCacheService = Depends(get_cache_service),
 ):
     settings = get_settings()
+    doc_count = rag_service.get_document_count()
+
+    from ..utils.metrics import DOCUMENT_CHUNKS
+    DOCUMENT_CHUNKS.set(doc_count)
+
     return HealthResponse(
         status="healthy",
         version=settings.app_version,
         services={
-            "speech":         speech_service.is_healthy(),
-            "document":       document_service.is_healthy(),
-            "rag":            rag_service.is_healthy(),
-            "llm":            llm_service.is_healthy(),
-            "reranker":       reranker_service.is_healthy(),
-            "conversation":   conv_service.is_healthy(),
-            "document_count": rag_service.get_document_count(),
+            "speech":           speech_service.is_healthy(),
+            "document":         document_service.is_healthy(),
+            "rag":              rag_service.is_healthy(),
+            "llm":              llm_service.is_healthy(),
+            "llm_circuit":      llm_service.circuit_state,
+            "reranker":         reranker_service.is_healthy(),
+            "conversation":     conv_service.is_healthy(),
+            "cache":            cache_service.is_healthy(),
+            "cache_stats":      cache_service.stats,
+            "document_count":   doc_count,
         },
     )
+
+
+@router.get("/cache/stats", tags=["System"])
+async def cache_stats(cache_service: SemanticCacheService = Depends(get_cache_service)):
+    return cache_service.stats
+
+
+@router.delete("/cache", tags=["System"])
+async def clear_cache(cache_service: SemanticCacheService = Depends(get_cache_service)):
+    cache_service.clear()
+    return {"message": "Semantic cache cleared", "success": True}
 
 
 # ── Documents ─────────────────────────────────────────────────────────────────
@@ -189,10 +212,22 @@ async def rag_query(
     rag_service:      RAGService      = Depends(get_rag_service),
     llm_service:      LLMService      = Depends(get_llm_service),
     reranker_service: RerankerService = Depends(get_reranker_service),
+    cache_service:    SemanticCacheService = Depends(get_cache_service),
 ):
     t0 = time.time()
     settings = get_settings()
     try:
+        # ── Semantic cache lookup ─────────────────────────────────────────────
+        cached = await cache_service.lookup(request.query)
+        if cached is not None:
+            total_ms = round((time.time() - t0) * 1000, 2)
+            record_pipeline_metrics("/rag/query", total_ms,
+                                    llm_provider=settings.llm_provider, cache_hit=True)
+            return RAGQueryResponse(
+                query=request.query, answer=cached, sources=[],
+                processing_time_ms=total_ms, cache_hit=True,
+            )
+
         context, sources, total_retrieved, retrieval_ms = await _run_rag_pipeline(
             request.query, rag_service, llm_service, reranker_service, settings
         )
@@ -200,11 +235,17 @@ async def rag_query(
         answer = await llm_service.generate_response(request.query, context)
         llm_ms = round((time.time() - t_llm) * 1000, 2)
         total_ms = round((time.time() - t0) * 1000, 2)
+
+        await cache_service.store(request.query, answer)
+        record_pipeline_metrics("/rag/query", total_ms, llm_provider=settings.llm_provider,
+                                llm_ms=llm_ms, retrieval_ms=retrieval_ms, cache_hit=False)
+
         return RAGQueryResponse(
             query=request.query,
             answer=answer,
             sources=sources if request.include_sources else [],
             processing_time_ms=total_ms,
+            cache_hit=False,
             metrics=PipelineMetrics(
                 total_ms=total_ms, retrieval_ms=retrieval_ms, llm_ms=llm_ms,
                 docs_retrieved=total_retrieved, docs_after_threshold=len(sources),
@@ -225,16 +266,31 @@ async def text_query(
     llm_service:      LLMService      = Depends(get_llm_service),
     reranker_service: RerankerService = Depends(get_reranker_service),
     speech_service:   SpeechService   = Depends(get_speech_service),
+    cache_service:    SemanticCacheService = Depends(get_cache_service),
 ):
     t0 = time.time()
     settings = get_settings()
     try:
+        # ── Cache lookup (text-only; audio is synthesized fresh even on hit) ──
+        cached = await cache_service.lookup(request.query)
+        if cached is not None and not request.include_audio:
+            total_ms = round((time.time() - t0) * 1000, 2)
+            record_pipeline_metrics("/text/query", total_ms,
+                                    llm_provider=settings.llm_provider, cache_hit=True)
+            return TextQueryResponse(
+                query=request.query, answer=cached, sources=[],
+                processing_time_ms=total_ms, cache_hit=True,
+            )
+
         context, sources, total_retrieved, retrieval_ms = await _run_rag_pipeline(
             request.query, rag_service, llm_service, reranker_service, settings
         )
         t_llm = time.time()
-        answer = await llm_service.generate_response(request.query, context)
-        llm_ms = round((time.time() - t_llm) * 1000, 2)
+        answer = cached or await llm_service.generate_response(request.query, context)
+        llm_ms = 0.0 if cached else round((time.time() - t_llm) * 1000, 2)
+
+        if not cached:
+            await cache_service.store(request.query, answer)
 
         audio_base64 = tts_ms = audio_fmt = None
         if request.include_audio:
@@ -244,6 +300,10 @@ async def text_query(
             tts_ms = round((time.time() - t_tts) * 1000, 2)
 
         total_ms = round((time.time() - t0) * 1000, 2)
+        record_pipeline_metrics("/text/query", total_ms, llm_provider=settings.llm_provider,
+                                tts_backend=settings.tts_backend, llm_ms=llm_ms,
+                                tts_ms=tts_ms or 0.0, retrieval_ms=retrieval_ms,
+                                cache_hit=bool(cached))
         return TextQueryResponse(
             query=request.query,
             answer=answer,
@@ -251,6 +311,7 @@ async def text_query(
             audio_base64=audio_base64,
             audio_format=audio_fmt,
             processing_time_ms=total_ms,
+            cache_hit=bool(cached),
             metrics=PipelineMetrics(
                 total_ms=total_ms, retrieval_ms=retrieval_ms, llm_ms=llm_ms, tts_ms=tts_ms,
                 docs_retrieved=total_retrieved, docs_after_threshold=len(sources),

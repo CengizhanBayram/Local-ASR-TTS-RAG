@@ -8,6 +8,7 @@ from typing import AsyncGenerator, List, Optional
 
 from ..config import get_settings
 from ..models.exceptions import LLMError, ConfigurationError
+from ..utils.retry import CircuitBreaker, retry_async
 from .providers.base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,11 @@ Original question: {query}"""
     def __init__(self):
         self.settings = get_settings()
         self._provider: BaseLLMProvider = self._init_provider()
+        self._circuit = CircuitBreaker(
+            failure_threshold=self.settings.llm_circuit_failure_threshold,
+            recovery_timeout=self.settings.llm_circuit_recovery_timeout,
+            name=self.settings.llm_provider,
+        )
 
     def _init_provider(self) -> BaseLLMProvider:
         p = self.settings.llm_provider.lower()
@@ -181,11 +187,20 @@ Original question: {query}"""
         system_prompt: Optional[str] = None,
         conversation_history: str = "",
     ) -> str:
+        sys_p = self._system_prompt(system_prompt)
+        usr_p = self._build_user_message(query, context, conversation_history)
         try:
-            return await self._provider.generate(
-                self._system_prompt(system_prompt),
-                self._build_user_message(query, context, conversation_history),
+            return await self._circuit.call(
+                retry_async,
+                self._provider.generate,
+                sys_p,
+                usr_p,
+                max_retries=self.settings.llm_max_retries,
+                base_delay=self.settings.llm_retry_base_delay,
             )
+        except CircuitBreaker.CircuitOpenError as e:
+            logger.error(f"LLM circuit OPEN: {e}")
+            raise LLMError(f"LLM servisi şu an erişilemiyor, lütfen bekleyin.")
         except Exception as e:
             logger.error(f"generate_response error: {e}")
             raise LLMError(f"Cevap üretilemedi: {e}")
@@ -268,4 +283,8 @@ Original question: {query}"""
     # ── Health ───────────────────────────────────────────────────────────────
 
     def is_healthy(self) -> bool:
-        return self._provider.is_healthy()
+        return self._provider.is_healthy() and self._circuit.state != "open"
+
+    @property
+    def circuit_state(self) -> str:
+        return self._circuit.state

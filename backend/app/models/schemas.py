@@ -77,6 +77,7 @@ class RAGQueryResponse(BaseModel):
     answer: str
     sources: List[SourceDocument] = []
     processing_time_ms: float
+    cache_hit: bool = False
     metrics: Optional[PipelineMetrics] = None
 
 
@@ -102,6 +103,7 @@ class TextQueryResponse(BaseModel):
     audio_base64: Optional[str] = None
     audio_format: Optional[str] = None
     processing_time_ms: float
+    cache_hit: bool = False
     metrics: Optional[PipelineMetrics] = None
 
 

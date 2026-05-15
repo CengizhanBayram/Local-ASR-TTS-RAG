@@ -112,6 +112,21 @@ class Settings(BaseSettings):
     # ── Gemini generation ─────────────────────────────────────────────────────
     gemini_max_output_tokens: int = Field(default=1024, env="GEMINI_MAX_OUTPUT_TOKENS")
 
+    # ── Semantic Cache ────────────────────────────────────────────────────────
+    cache_enabled: bool = Field(default=True, env="CACHE_ENABLED")
+    cache_max_size: int = Field(default=512, env="CACHE_MAX_SIZE")
+    cache_similarity_threshold: float = Field(default=0.92, env="CACHE_SIMILARITY_THRESHOLD")
+    cache_ttl_seconds: int = Field(default=3600, env="CACHE_TTL_SECONDS")
+
+    # ── LLM Retry + Circuit Breaker ───────────────────────────────────────────
+    llm_max_retries: int = Field(default=2, env="LLM_MAX_RETRIES")
+    llm_retry_base_delay: float = Field(default=1.0, env="LLM_RETRY_BASE_DELAY")
+    llm_circuit_failure_threshold: int = Field(default=5, env="LLM_CIRCUIT_FAILURE_THRESHOLD")
+    llm_circuit_recovery_timeout: float = Field(default=60.0, env="LLM_CIRCUIT_RECOVERY_TIMEOUT")
+
+    # ── Rate Limiting ─────────────────────────────────────────────────────────
+    rate_limit_enabled: bool = Field(default=True, env="RATE_LIMIT_ENABLED")
+
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: list[str] = Field(default=["*"], env="CORS_ORIGINS")
 
