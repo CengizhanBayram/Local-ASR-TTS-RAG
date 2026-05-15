@@ -39,13 +39,13 @@ class GeminiProvider(BaseLLMProvider):
                 full_prompt, generation_config=self._gen_config
             ).text
 
-        return await asyncio.get_event_loop().run_in_executor(None, _run)
+        return await asyncio.get_running_loop().run_in_executor(None, _run)
 
     async def generate_stream(
         self, system_prompt: str, user_message: str
     ) -> AsyncGenerator[str, None]:
         full_prompt = f"{system_prompt}\n\n{user_message}"
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
         def _stream():

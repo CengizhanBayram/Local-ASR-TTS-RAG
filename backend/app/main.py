@@ -50,7 +50,7 @@ async def _warmup_whisper(settings) -> None:
         segs, _ = model.transcribe(io.BytesIO(wav_bytes), language=settings.speech_language)
         list(segs)  # exhaust generator
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     t = time.monotonic()
     await loop.run_in_executor(None, _run)
     logger.info(f"Whisper CUDA warm-up done in {time.monotonic()-t:.1f}s")
@@ -91,7 +91,7 @@ async def _preload_models(settings) -> None:
     def _load_conv():
         get_conversation_service()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     await asyncio.gather(
         _load_whisper(),
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # Expand the default thread pool so CPU-bound executor tasks don't queue behind each other
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=32))
 
     # Cap PyTorch intra-op threads for sentence-transformers / reranker (avoid NUMA contention)
@@ -260,15 +260,20 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
-    
+
     settings = get_settings()
+    extra: dict = {}
+    if sys.platform != "win32":
+        extra["loop"] = "uvloop"
+        extra["http"] = "httptools"
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
         reload=settings.debug,
         workers=1 if settings.debug else 4,
-        loop="uvloop",
-        http="httptools",
+        **extra,
     )

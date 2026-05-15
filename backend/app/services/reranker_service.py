@@ -47,7 +47,7 @@ class RerankerService:
         def _run():
             return self._model.predict(pairs, show_progress_bar=False)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         scores = await loop.run_in_executor(None, _run)
 
         ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)

@@ -20,10 +20,11 @@ from ..models.exceptions import SpeechServiceError
 
 logger = logging.getLogger(__name__)
 
-# Singleton model yükleme
+# Singleton model yükleme — separate locks allow parallel loading at startup
 _whisper_model = None
 _piper_voice = None
-_model_lock = asyncio.Lock()
+_whisper_lock = asyncio.Lock()
+_piper_lock = asyncio.Lock()
 
 
 def _load_whisper_sync(model_size: str, device: str, compute_type: str, cpu_threads: int = 16):
@@ -55,7 +56,7 @@ def _load_piper_sync(model_path: str):
 async def get_whisper_model(settings):
     global _whisper_model
     if _whisper_model is None:
-        async with _model_lock:
+        async with _whisper_lock:
             if _whisper_model is None:
                 loop = asyncio.get_running_loop()
                 _whisper_model = await loop.run_in_executor(
@@ -72,7 +73,7 @@ async def get_whisper_model(settings):
 async def get_piper_voice(settings):
     global _piper_voice
     if _piper_voice is None:
-        async with _model_lock:
+        async with _piper_lock:
             if _piper_voice is None:
                 loop = asyncio.get_running_loop()
                 _piper_voice = await loop.run_in_executor(

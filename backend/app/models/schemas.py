@@ -85,6 +85,7 @@ class VoiceQueryResponse(BaseModel):
     answer: str
     sources: List[SourceDocument] = []
     audio_base64: str
+    audio_format: str = "wav"
     processing_time_ms: float
     metrics: Optional[PipelineMetrics] = None
 
@@ -99,6 +100,7 @@ class TextQueryResponse(BaseModel):
     answer: str
     sources: List[SourceDocument] = []
     audio_base64: Optional[str] = None
+    audio_format: Optional[str] = None
     processing_time_ms: float
     metrics: Optional[PipelineMetrics] = None
 
@@ -129,6 +131,7 @@ class ChatQueryResponse(BaseModel):
     session_id: str
     sources: List[SourceDocument] = []
     audio_base64: Optional[str] = None
+    audio_format: Optional[str] = None
     processing_time_ms: float
     conversation_turn: int
     metrics: Optional[PipelineMetrics] = None
@@ -161,6 +164,7 @@ class TTSRequest(BaseModel):
 
 class TTSResponse(BaseModel):
     audio_base64: str
+    audio_format: str = "wav"
     tts_ms: float
     text_length: int
     audio_size_kb: float

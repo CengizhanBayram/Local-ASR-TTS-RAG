@@ -183,8 +183,6 @@ async def _run_rag_pipeline(
 
 # ── RAG Query (stateless) ─────────────────────────────────────────────────────
 
-from typing import Optional
-
 @router.post("/rag/query", response_model=RAGQueryResponse, tags=["RAG"])
 async def rag_query(
     request:          RAGQueryRequest,
@@ -238,10 +236,11 @@ async def text_query(
         answer = await llm_service.generate_response(request.query, context)
         llm_ms = round((time.time() - t_llm) * 1000, 2)
 
-        audio_base64 = tts_ms = None
+        audio_base64 = tts_ms = audio_fmt = None
         if request.include_audio:
             t_tts = time.time()
             audio_base64 = await speech_service.synthesize_to_base64(answer)
+            audio_fmt = speech_service.tts_format
             tts_ms = round((time.time() - t_tts) * 1000, 2)
 
         total_ms = round((time.time() - t0) * 1000, 2)
@@ -250,6 +249,7 @@ async def text_query(
             answer=answer,
             sources=sources,
             audio_base64=audio_base64,
+            audio_format=audio_fmt,
             processing_time_ms=total_ms,
             metrics=PipelineMetrics(
                 total_ms=total_ms, retrieval_ms=retrieval_ms, llm_ms=llm_ms, tts_ms=tts_ms,
@@ -258,12 +258,13 @@ async def text_query(
         )
     except NoDocumentsError:
         answer = "No documents loaded yet. Please upload a document first."
-        audio_base64 = None
+        audio_base64 = audio_fmt = None
         if request.include_audio:
             audio_base64 = await speech_service.synthesize_to_base64(answer)
+            audio_fmt = speech_service.tts_format
         return TextQueryResponse(
             query=request.query, answer=answer, sources=[], audio_base64=audio_base64,
-            processing_time_ms=round((time.time() - t0) * 1000, 2),
+            audio_format=audio_fmt, processing_time_ms=round((time.time() - t0) * 1000, 2),
         )
     except VoiceAIException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -320,10 +321,11 @@ async def chat_query(
             answer = await llm_service.generate_response(request.query, context, conversation_history=history_text)
         llm_ms = round((time.time() - t_llm) * 1000, 2)
 
-        audio_base64 = tts_ms = None
+        audio_base64 = tts_ms = audio_fmt = None
         if request.include_audio:
             t_tts = time.time()
             audio_base64 = await speech_service.synthesize_to_base64(answer)
+            audio_fmt = speech_service.tts_format
             tts_ms = round((time.time() - t_tts) * 1000, 2)
 
         conv_service.add_user_message(session_id, request.query)
@@ -337,6 +339,7 @@ async def chat_query(
             session_id=session_id,
             sources=sources,
             audio_base64=audio_base64,
+            audio_format=audio_fmt,
             processing_time_ms=total_ms,
             conversation_turn=turn_count,
             rewritten_query=rewritten_query,
@@ -511,6 +514,7 @@ async def voice_query(
             answer=answer,
             sources=sources,
             audio_base64=audio_base64,
+            audio_format=speech_service.tts_format,
             processing_time_ms=total_ms,
             metrics=PipelineMetrics(
                 total_ms=total_ms, stt_ms=stt_ms, retrieval_ms=retrieval_ms,
@@ -545,6 +549,7 @@ async def text_to_speech(
     logger.info(f"TTS: {len(request.text)} chars → {audio_bytes} bytes in {tts_ms}ms")
     return TTSResponse(
         audio_base64=audio_base64,
+        audio_format=speech_service.tts_format,
         tts_ms=tts_ms,
         text_length=len(request.text),
         audio_size_kb=round(audio_bytes / 1024, 1),
