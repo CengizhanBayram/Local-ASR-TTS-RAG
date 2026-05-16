@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: Optional[str] = Field(default=None, env="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-2.0-flash", env="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-2.5-flash", env="GEMINI_MODEL")
 
     # Ollama  (local GPU LLM)
     ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     openai_compat_api_key: str = Field(default="dummy", env="OPENAI_COMPAT_API_KEY")
 
     # ── STT — Faster Whisper ─────────────────────────────────────────────────
-    whisper_model_size: str = Field(default="small", env="WHISPER_MODEL_SIZE")
+    whisper_model_size: str = Field(default="tiny", env="WHISPER_MODEL_SIZE")
     # cpu | cuda   — set cuda on GPU server
     whisper_device: str = Field(default="cpu", env="WHISPER_DEVICE")
     # int8 (CPU) | float16 (GPU) | float32
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
 
     # ── VAD (sent to frontend on connect) ────────────────────────────────────
     vad_silence_threshold: float = Field(default=0.008, env="VAD_SILENCE_THRESHOLD")
-    vad_silence_duration_ms: int = Field(default=700, env="VAD_SILENCE_DURATION_MS")
+    vad_silence_duration_ms: int = Field(default=400, env="VAD_SILENCE_DURATION_MS")
 
     # ── Gemini generation ─────────────────────────────────────────────────────
     gemini_max_output_tokens: int = Field(default=1024, env="GEMINI_MAX_OUTPUT_TOKENS")

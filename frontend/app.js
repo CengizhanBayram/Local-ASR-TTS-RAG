@@ -6,9 +6,11 @@
 // ============================================================
 // Configuration
 // ============================================================
+const _host = window.location.host;
+const _wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const CONFIG = {
-    API_BASE:  'http://localhost:8000/api',
-    WS_BASE:   'ws://localhost:8000/api',
+    API_BASE:  `${window.location.protocol}//${_host}/api`,
+    WS_BASE:   `${_wsProto}//${_host}/api`,
     SAMPLE_RATE: 16000,
     AUDIO_CHUNK_SIZE: 4096,
     RECONNECT_DELAY: 1000,

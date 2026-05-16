@@ -172,11 +172,15 @@ class RealtimeTranscriber:
             return ""
 
     async def _transcribe(self, audio_data: bytes) -> str:
+        t0 = time.monotonic()
         model = await get_whisper_model(self.settings)
+        t_model = time.monotonic()
         wav_data = self._create_wav(audio_data)
+        t_wav = time.monotonic()
 
         def _run():
             audio_io = io.BytesIO(wav_data)
+            t_inf = time.monotonic()
             segments, _ = model.transcribe(
                 audio_io,
                 language=self.settings.speech_language,
@@ -184,7 +188,15 @@ class RealtimeTranscriber:
                 vad_filter=self.settings.whisper_vad_filter,
                 condition_on_previous_text=self.settings.whisper_condition_on_previous,
             )
-            return "".join(s.text for s in segments).strip()
+            result = "".join(s.text for s in segments).strip()
+            t_done = time.monotonic()
+            logger.info(
+                f"STT breakdown: model_get={round((t_model-t0)*1000)}ms "
+                f"wav_create={round((t_wav-t_model)*1000)}ms "
+                f"inference={round((t_done-t_inf)*1000)}ms "
+                f"total={round((t_done-t0)*1000)}ms"
+            )
+            return result
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _run)
@@ -222,12 +234,24 @@ class EdgeTTSSynthesizer:
 
     async def synthesize_full(self, text: str) -> tuple[bytes, str]:
         """Returns (audio_bytes, format) where format is 'mp3'."""
-        communicate = self._edge_tts.Communicate(text, self.voice)
-        parts = []
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                parts.append(chunk["data"])
-        return b"".join(parts), "mp3"
+        last_exc = None
+        for attempt in range(3):
+            try:
+                communicate = self._edge_tts.Communicate(text, self.voice)
+                parts = []
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        parts.append(chunk["data"])
+                audio = b"".join(parts)
+                if audio:
+                    return audio, "mp3"
+                raise ValueError("Edge TTS returned empty audio")
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"Edge TTS attempt {attempt + 1}/3 failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        raise last_exc
 
     async def close(self):
         pass
@@ -453,21 +477,23 @@ class RealtimeVoicePipeline:
                 order_lock = asyncio.Lock()
 
                 async def tts_one(ord_: int, sentence: str):
+                    result = None
                     async with sem:
                         t = time.monotonic()
                         try:
                             audio, fmt = await self.synthesizer.synthesize_full(sentence)
                             tts_ms_total[0] += round((time.monotonic() - t) * 1000)
+                            result = (audio, fmt)
                         except Exception as e:
-                            logger.error(f"TTS sentence {ord_} error: {e}")
-                            return
-                    # Emit in-order as soon as this or earlier sentences are ready
+                            logger.error(f"TTS sentence {ord_} failed after retries: {e}")
+                    # Always advance next_emit even on failure — prevents deadlock
                     async with order_lock:
-                        pending[ord_] = (audio, fmt)
+                        pending[ord_] = result  # None if failed
                         while next_emit[0] in pending:
                             n = next_emit[0]
-                            a, f = pending.pop(n)
-                            await audio_q.put((n, a, f))
+                            item = pending.pop(n)
+                            if item is not None:
+                                await audio_q.put((n, item[0], item[1]))
                             next_emit[0] += 1
 
                 tasks = []
