@@ -89,6 +89,9 @@ class DocumentService:
 
         self._documents: dict[str, DocumentMetadata] = {}
         self._load_from_db()
+        # Tracks documents currently being indexed in the background
+        # Values: "processing" | "failed: <reason>"
+        self._processing: dict[str, str] = {}
 
     # ── DB helpers ────────────────────────────────────────────────────────────
 
@@ -134,17 +137,29 @@ class DocumentService:
     async def process_document(
         self, file: UploadFile
     ) -> Tuple[str, List[DocumentChunk], List[ParentChunk]]:
-        filename = file.filename
-        extension = Path(filename).suffix.lower()
+        """Convenience wrapper — reads the UploadFile then delegates to bytes method."""
+        content = await file.read()
+        return await self.process_document_bytes(content, file.filename)
 
+    async def process_document_bytes(
+        self,
+        content: bytes,
+        filename: str,
+        document_id: Optional[str] = None,
+    ) -> Tuple[str, List[DocumentChunk], List[ParentChunk]]:
+        """
+        Core document processing — accepts raw bytes.
+        Passing ``document_id`` lets the caller reserve an ID upfront
+        (needed for background indexing so the ID can be returned immediately).
+        """
+        extension = Path(filename).suffix.lower()
         if extension not in self.SUPPORTED_EXTENSIONS:
             raise UnsupportedFileTypeError(extension)
 
-        content = await file.read()
         file_size = len(content)
-        document_id = str(uuid.uuid4())
+        doc_id = document_id or str(uuid.uuid4())
 
-        file_path = self.documents_path / f"{document_id}{extension}"
+        file_path = self.documents_path / f"{doc_id}{extension}"
         with open(file_path, 'wb') as f:
             f.write(content)
 
@@ -153,13 +168,13 @@ class DocumentService:
         if self.settings.enable_parent_child:
             effective_map = page_map or ([(1, text)] if text else [])
             child_chunks, parent_chunks = self._create_parent_child_chunks(
-                effective_map, document_id, filename
+                effective_map, doc_id, filename
             )
         else:
             if page_map:
-                child_chunks = self._create_chunks_with_pages(page_map, document_id, filename)
+                child_chunks = self._create_chunks_with_pages(page_map, doc_id, filename)
             else:
-                child_chunks = self._create_chunks(text or "", document_id, filename)
+                child_chunks = self._create_chunks(text or "", doc_id, filename)
             parent_chunks = []
 
         meta = DocumentMetadata(
@@ -172,7 +187,7 @@ class DocumentService:
         with self._conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?)",
-                (document_id, meta.filename, meta.file_type.value, meta.file_size,
+                (doc_id, meta.filename, meta.file_type.value, meta.file_size,
                  meta.page_count, meta.chunk_count, meta.uploaded_at.isoformat())
             )
             if parent_chunks:
@@ -181,13 +196,22 @@ class DocumentService:
                     [(p.id, p.document_id, p.filename, p.content, p.page, p.chunk_index)
                      for p in parent_chunks]
                 )
-        self._documents[document_id] = meta
+        self._documents[doc_id] = meta
+        self._processing.pop(doc_id, None)  # clear "processing" marker if set
 
         logger.info(
             f"Processed {filename}: {len(child_chunks)} child chunks, "
             f"{len(parent_chunks)} parent chunks"
         )
-        return document_id, child_chunks, parent_chunks
+        return doc_id, child_chunks, parent_chunks
+
+    def get_processing_status(self, document_id: str) -> dict:
+        if document_id in self._documents:
+            meta = self._documents[document_id]
+            return {"status": "completed", "chunk_count": meta.chunk_count}
+        if document_id in self._processing:
+            return {"status": self._processing[document_id]}
+        return {"status": "not_found"}
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 

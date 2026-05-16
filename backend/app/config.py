@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # CTranslate2 thread count; 0=auto (all cores). On 128-core EPYC, 16 avoids contention.
     whisper_cpu_threads: int = Field(default=16, env="WHISPER_CPU_THREADS")
     speech_language: str = Field(default="tr", env="SPEECH_LANGUAGE")
+    # beam_size=1 → greedy decode, ~5x faster than beam_size=5, minimal accuracy loss
+    whisper_beam_size: int = Field(default=1, env="WHISPER_BEAM_SIZE")
+    # VAD filter skips silent segments before transcription
+    whisper_vad_filter: bool = Field(default=True, env="WHISPER_VAD_FILTER")
+    # Disable previous-text conditioning — faster, no cross-utterance context
+    whisper_condition_on_previous: bool = Field(default=False, env="WHISPER_CONDITION_ON_PREVIOUS")
 
     # ── TTS ──────────────────────────────────────────────────────────────────
     # piper | edge_tts

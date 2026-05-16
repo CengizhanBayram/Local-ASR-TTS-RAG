@@ -2,13 +2,17 @@
 API Routes — REST + SSE endpoints
 """
 
-import json
-import time
+import asyncio
 import base64
+import json
 import logging
+import re as _re
+import time
+import uuid
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..config import get_settings
@@ -105,27 +109,61 @@ async def clear_cache(cache_service: SemanticCacheService = Depends(get_cache_se
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 
-@router.post("/documents/upload", response_model=DocumentResponse, tags=["Documents"])
+@router.post("/documents/upload", response_model=DocumentResponse,
+             status_code=202, tags=["Documents"])
 async def upload_document(
-    file:             UploadFile    = File(...),
-    document_service: DocumentService = Depends(get_document_service),
-    rag_service:      RAGService      = Depends(get_rag_service),
+    background_tasks: BackgroundTasks,
+    file:             UploadFile       = File(...),
+    document_service: DocumentService  = Depends(get_document_service),
+    rag_service:      RAGService       = Depends(get_rag_service),
 ):
-    try:
-        document_id, child_chunks, parent_chunks = await document_service.process_document(file)
-        chunk_count = await rag_service.add_documents(child_chunks, parent_chunks)
-        return DocumentResponse(
-            id=document_id,
-            filename=file.filename,
-            file_type=file.filename.split('.')[-1],
-            chunk_count=chunk_count,
-            message=f"Document uploaded. {chunk_count} chunks indexed.",
+    """
+    Accepts the file immediately (202) and indexes it in the background.
+    Poll ``GET /api/documents/{id}/status`` to check completion.
+    """
+    extension = Path(file.filename).suffix.lower()
+    if extension not in DocumentService.SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Desteklenmeyen dosya türü: {extension}. "
+                   f"İzin verilenler: {', '.join(DocumentService.SUPPORTED_EXTENSIONS)}"
         )
-    except VoiceAIException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.message)
-    except Exception as e:
-        logger.error(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+    # Read bytes eagerly — file handle closes when the request ends
+    content = await file.read()
+    filename = file.filename
+    doc_id = str(uuid.uuid4())
+    document_service._processing[doc_id] = "processing"
+
+    async def _index():
+        try:
+            _, child_chunks, parent_chunks = await document_service.process_document_bytes(
+                content, filename, document_id=doc_id
+            )
+            await rag_service.add_documents(child_chunks, parent_chunks)
+            logger.info(f"Background index complete: {filename} ({len(child_chunks)} chunks)")
+        except Exception as exc:
+            document_service._processing[doc_id] = f"failed: {exc}"
+            logger.error(f"Background index failed: {filename}: {exc}")
+
+    background_tasks.add_task(_index)
+
+    return DocumentResponse(
+        id=doc_id,
+        filename=filename,
+        file_type=extension[1:],
+        chunk_count=0,
+        message="Dosya alındı, arka planda indeksleniyor.",
+        status="processing",
+    )
+
+
+@router.get("/documents/{document_id}/status", tags=["Documents"])
+async def get_document_status(
+    document_id:      str,
+    document_service: DocumentService = Depends(get_document_service),
+):
+    return {"document_id": document_id, **document_service.get_processing_status(document_id)}
 
 
 @router.get("/documents", response_model=DocumentListResponse, tags=["Documents"])
@@ -202,6 +240,78 @@ async def _run_rag_pipeline(
         context = "\n\n---\n\n".join(parts)
 
     return context, sources, total_retrieved, retrieval_ms
+
+
+# ── Parallel LLM + TTS pipeline (for audio-enabled REST endpoints) ───────────
+
+async def _parallel_llm_tts(
+    query: str,
+    context: str,
+    mode: str,
+    llm_service: LLMService,
+    speech_service: SpeechService,
+    history_text: str = "",
+) -> tuple[str, bytes]:
+    """
+    Stream LLM tokens → detect sentence boundaries → TTS each sentence concurrently.
+    Overlaps LLM generation with TTS synthesis so total latency ≈ max(LLM, TTS)
+    rather than LLM + TTS sequentially.
+    Returns (full_answer_text, combined_audio_bytes).
+    """
+    sentence_q: asyncio.Queue = asyncio.Queue()
+    # (index, audio_bytes) pairs — populated out of order, sorted before combining
+    audio_results: list = []
+    full_parts: list = []
+
+    async def _produce():
+        buf = ""
+        order = 0
+        if mode == "free":
+            gen = llm_service.generate_free_stream(query, conversation_history=history_text)
+        else:
+            gen = llm_service.generate_response_stream(
+                query, context, conversation_history=history_text
+            )
+        async for token in gen:
+            full_parts.append(token)
+            buf += token
+            if _re.search(r'[.!?。！？]\s*$', buf.rstrip()) or len(buf) > 250:
+                s = buf.strip()
+                buf = ""
+                if s:
+                    await sentence_q.put((order, s))
+                    order += 1
+        if buf.strip():
+            await sentence_q.put((order, buf.strip()))
+        await sentence_q.put(None)
+
+    async def _consume():
+        sem = asyncio.Semaphore(2)
+        tasks = []
+
+        async def _tts_one(idx: int, sentence: str):
+            async with sem:
+                audio = await speech_service.synthesize_speech(sentence)
+                audio_results.append((idx, audio))
+
+        while True:
+            item = await sentence_q.get()
+            if item is None:
+                break
+            idx, sentence = item
+            tasks.append(asyncio.create_task(_tts_one(idx, sentence)))
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    await asyncio.gather(_produce(), _consume())
+
+    full_answer = "".join(full_parts)
+    audio_results.sort(key=lambda x: x[0])
+    combined = SpeechService.combine_audio(
+        [a for _, a in audio_results], speech_service.tts_format
+    )
+    return full_answer, combined
 
 
 # ── RAG Query (stateless) ─────────────────────────────────────────────────────
@@ -376,18 +486,27 @@ async def chat_query(
                 context = ""
 
         t_llm = time.time()
-        if request.mode == "free":
-            answer = await llm_service.generate_free_response(request.query, conversation_history=history_text)
-        else:
-            answer = await llm_service.generate_response(request.query, context, conversation_history=history_text)
-        llm_ms = round((time.time() - t_llm) * 1000, 2)
-
         audio_base64 = tts_ms = audio_fmt = None
+
         if request.include_audio:
-            t_tts = time.time()
-            audio_base64 = await speech_service.synthesize_to_base64(answer)
+            # LLM generation and TTS run in parallel — overlapping latency
+            answer, audio_bytes = await _parallel_llm_tts(
+                request.query, context, request.mode,
+                llm_service, speech_service, history_text,
+            )
+            audio_base64 = base64.b64encode(audio_bytes).decode()
             audio_fmt = speech_service.tts_format
-            tts_ms = round((time.time() - t_tts) * 1000, 2)
+        else:
+            if request.mode == "free":
+                answer = await llm_service.generate_free_response(
+                    request.query, conversation_history=history_text
+                )
+            else:
+                answer = await llm_service.generate_response(
+                    request.query, context, conversation_history=history_text
+                )
+
+        llm_ms = round((time.time() - t_llm) * 1000, 2)
 
         conv_service.add_user_message(session_id, request.query)
         conv_service.add_assistant_message(session_id, answer)

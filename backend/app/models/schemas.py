@@ -32,6 +32,7 @@ class DocumentResponse(BaseModel):
     chunk_count: int
     message: str
     success: bool = True
+    status: str = "completed"  # "processing" | "completed" | "failed"
 
 
 class DocumentListItem(BaseModel):

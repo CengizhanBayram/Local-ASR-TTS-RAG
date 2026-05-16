@@ -177,7 +177,13 @@ class RealtimeTranscriber:
 
         def _run():
             audio_io = io.BytesIO(wav_data)
-            segments, _ = model.transcribe(audio_io, language=self.settings.speech_language)
+            segments, _ = model.transcribe(
+                audio_io,
+                language=self.settings.speech_language,
+                beam_size=self.settings.whisper_beam_size,
+                vad_filter=self.settings.whisper_vad_filter,
+                condition_on_previous_text=self.settings.whisper_condition_on_previous,
+            )
             return "".join(s.text for s in segments).strip()
 
         loop = asyncio.get_running_loop()
